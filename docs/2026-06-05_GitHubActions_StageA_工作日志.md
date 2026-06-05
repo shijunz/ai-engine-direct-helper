@@ -10,15 +10,17 @@
 
 每次 push / PR 自动跑 lint + 多组合 wheel build + smoke test，全部跑在 **GitHub-hosted** runner 上（无 self-hosted 依赖）。
 
-最终矩阵：**4 Python × 2 QNN SDK × 2 OS = 16 个 build job**。
+最终矩阵：
 
-| 维度 | 取值 |
-|---|---|
-| Python | 3.10 / 3.11 / 3.12 / 3.13 |
-| QNN SDK | 2.46.0.260424 / 2.47.0.260601（Community） |
-| OS | windows-latest (x64, ARM64EC binaries) / windows-11-arm (native ARM64) |
+| 维度 | 取值 | 备注 |
+|---|---|---|
+| Python (Windows) | 3.11 / 3.12 / 3.13 | 删了 3.10；setup.py classifier 主推 cp312 |
+| QNN SDK (Windows) | 2.46.0.260424 / 2.47.0.260601（Community） | 2.46 用 apigwx 域名 |
+| Windows OS | windows-latest (x64, ARM64EC binaries) / windows-11-arm (native ARM64) | x64 build-only；ARM64 build + smoke test |
+| Linux | ubuntu-22.04-arm × py3.12 × QNN 2.47 = 1 job | toolchain `aarch64-oe-linux-gcc11.2`, hexagon 68 |
+| Android | ubuntu-latest + NDK r26d, arm64-v8a = 1 job | 不是 wheel，是 `libappbuilder.so`；不测试 |
 
-x64 job 只 build 不 test（ARM64EC 二进制不能在 x86-64 硬件上 import）；ARM64 job 在同一 runner 上 native build + smoke test。
+3 Python × 2 QNN × 2 Windows OS = **12 Windows job** + 1 Linux + 1 Android = **14 个 build job/push**。
 
 ---
 
@@ -26,8 +28,9 @@ x64 job 只 build 不 test（ARM64EC 二进制不能在 x86-64 硬件上 import�
 
 | 文件 | 状态 | 说明 |
 |---|---|---|
-| [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) | 新增 | 主 workflow，3 个 job：lint + build-windows-x64 + build-windows-arm64 |
-| [`.github/actions/setup-qnn-sdk/action.yml`](../.github/actions/setup-qnn-sdk/action.yml) | 新增 | Composite action：下载 + actions/cache 缓存 QNN Community SDK，自动探测解压结构，导出 `QNN_SDK_ROOT`；支持 `version` + `url` 两个 input |
+| [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) | 新增 | 主 workflow，5 个 job：lint + build-windows-x64 (matrix 6) + build-windows-arm64 (matrix 6) + build-linux-arm64 + build-android-arm64v8a |
+| [`.github/actions/setup-qnn-sdk/action.yml`](../.github/actions/setup-qnn-sdk/action.yml) | 新增 | Composite action：下载 + actions/cache 缓存 QNN Community SDK，自动探测解压结构，导出 `QNN_SDK_ROOT`；OS-aware 双分支 (PowerShell + bash)；支持 `version` + `url` 两个 input |
+| [`tests/test_cpu_runtime_smoke.py`](../tests/test_cpu_runtime_smoke.py) | 新增 | Stage B-lite：pybind C++ 扩展 + QNN CPU backend DLL 发现，**不**碰 NPU |
 | [`.gitignore`](../.gitignore) | 修改 | 补 `build/`, `lib/`, `*.egg-info/`, `*.whl`, `__pycache__/`, `*.pyc` |
 | [`tests/test_package_smoke.py`](../tests/test_package_smoke.py) | 一并 commit | 仓库里已有但 untracked，3 个 smoke test：import + 公开符号 + 常量值 |
 | [`.github/workflows/build-wheel.yml`](../.github/workflows/build-wheel.yml) | **未动** | 早期 self-hosted ARM64 workflow，按用户要求保留 |
@@ -44,7 +47,9 @@ x64 job 只 build 不 test（ARM64EC 二进制不能在 x86-64 硬件上 import�
 | `f46f561` | 同上加 `pyyaml`（一次性 grep 全文 import 后补齐） |
 | `f3b7047` | lint job 改 `continue-on-error: true`，存量 25 个 ruff 警告不阻塞构建 |
 | `1da6b4b` | 4 Python × 2 QNN matrix 展开，artifact 命名带版本 |
-| `(next)` | 加 `tests/test_cpu_runtime_smoke.py` ——「Stage B-lite」深度 CPU smoke：验证 pybind 层可调 + 绑定的 `QnnCpu.dll`/`QnnSystem.dll` 在 wheel 里可发现 |
+| `6fcd17e` | 加 [`tests/test_cpu_runtime_smoke.py`](../tests/test_cpu_runtime_smoke.py) ——「Stage B-lite」深度 CPU smoke：验证 pybind 层可调 + 绑定的 `QnnCpu.dll`/`QnnSystem.dll` 在 wheel 里可发现 |
+| `c9942d8` | Linux aarch64 wheel build+test job (`ubuntu-22.04-arm`, py3.12, QNN 2.47)；删 Python 3.10；setup-qnn-sdk action 扩展支持 bash/Linux |
+| `(android)` | Android arm64-v8a `libappbuilder.so` build job (`ubuntu-latest` + NDK r26d via `nttld/setup-ndk@v1`)，无测试（需要 Android 设备） |
 
 ---
 
