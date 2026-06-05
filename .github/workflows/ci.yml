@@ -210,8 +210,14 @@ jobs:
 
       - name: Smoke test
         shell: pwsh
+        # Two test files run here:
+        #  - test_package_smoke.py  : pure-Python imports + constants
+        #  - test_cpu_runtime_smoke.py : exercises the pybind C++ extension
+        #    and QNN CPU backend DLL discovery (no NPU, no .bin model).
+        # Together they catch ABI mismatches, missing bundled QNN DLLs,
+        # and pybind layer regressions before Stage B real-NPU testing.
         run: |
-          pytest tests/test_package_smoke.py -v
+          pytest tests/test_package_smoke.py tests/test_cpu_runtime_smoke.py -v
 
       - name: Upload CMake logs on failure
         if: failure()
