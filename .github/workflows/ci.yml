@@ -1,13 +1,17 @@
 name: CI
 
 # Stage A scope:
-#   - lint (Ubuntu, GitHub-hosted)
+#   - lint (Ubuntu, GitHub-hosted, informational only)
 #   - build the windows-x64 wheel (ARM64EC binaries, for x64 Python on X Elite)
 #       on windows-latest. Cannot smoke-test it here because windows-latest is
 #       x86-64 hardware and ARM64EC binaries crash on import (access violation).
 #       Smoke test for this wheel happens on real X Elite hardware in Stage B.
 #   - build the windows-arm64 wheel (native aarch64) on windows-11-arm and
 #       smoke-test it natively (the runner IS ARM64, so import works).
+#
+# Matrix: Python 3.10/3.11/3.12/3.13 x QNN SDK 2.46/2.47, on each OS.
+# 4 * 2 * 2 = 16 build jobs total. fail-fast disabled so a single broken
+# combination does not mask the rest.
 #
 # Known limitation: the Community SDK ships an upstream Genie. The Genie
 # library bundled into the wheel will be the upstream one rather than the
@@ -47,9 +51,18 @@ jobs:
         run: ruff check script/ tests/ samples/python/utils/
 
   build-windows-x64:
-    name: Build wheel (windows x64, ARM64EC)
+    name: x64 wheel · py${{ matrix.python }} · qnn${{ matrix.qnn.version }}
     runs-on: windows-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.11', '3.12', '3.13']
+        qnn:
+          - version: '2.47.0.260601'
+            url: ''
+          - version: '2.46.0.260424'
+            url: 'https://apigwx-aws.qualcomm.com/qsc/public/v1/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/2.46.0.260424/v2.46.0.260424.zip'
     steps:
       - name: Checkout (with pybind11 submodule only)
         uses: actions/checkout@v4
@@ -63,13 +76,14 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: ${{ matrix.python }}
           architecture: 'x64'
 
       - name: Setup QNN SDK
         uses: ./.github/actions/setup-qnn-sdk
         with:
-          version: '2.47.0.260601'
+          version: ${{ matrix.qnn.version }}
+          url: ${{ matrix.qnn.url }}
 
       - name: Install build dependencies
         shell: pwsh
@@ -96,7 +110,7 @@ jobs:
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wheel-win_amd64
+          name: wheel-win_amd64-py${{ matrix.python }}-qnn${{ matrix.qnn.version }}
           path: |
             dist/*.whl
             dist/*.zip
@@ -106,7 +120,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: cmake-logs-win_amd64
+          name: cmake-logs-win_amd64-py${{ matrix.python }}-qnn${{ matrix.qnn.version }}
           path: |
             build/**/CMakeFiles/CMakeOutput.log
             build/**/CMakeFiles/CMakeError.log
@@ -114,9 +128,18 @@ jobs:
           if-no-files-found: ignore
 
   build-windows-arm64:
-    name: Build & smoke-test wheel (windows arm64)
+    name: arm64 wheel + test · py${{ matrix.python }} · qnn${{ matrix.qnn.version }}
     runs-on: windows-11-arm
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.11', '3.12', '3.13']
+        qnn:
+          - version: '2.47.0.260601'
+            url: ''
+          - version: '2.46.0.260424'
+            url: 'https://apigwx-aws.qualcomm.com/qsc/public/v1/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/2.46.0.260424/v2.46.0.260424.zip'
     steps:
       - name: Checkout (with pybind11 submodule only)
         uses: actions/checkout@v4
@@ -130,13 +153,14 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: ${{ matrix.python }}
           architecture: 'arm64'
 
       - name: Setup QNN SDK
         uses: ./.github/actions/setup-qnn-sdk
         with:
-          version: '2.47.0.260601'
+          version: ${{ matrix.qnn.version }}
+          url: ${{ matrix.qnn.url }}
 
       - name: Install build dependencies
         shell: pwsh
@@ -163,7 +187,7 @@ jobs:
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wheel-win_arm64
+          name: wheel-win_arm64-py${{ matrix.python }}-qnn${{ matrix.qnn.version }}
           path: |
             dist/*.whl
             dist/*.zip
@@ -193,7 +217,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: cmake-logs-win_arm64
+          name: cmake-logs-win_arm64-py${{ matrix.python }}-qnn${{ matrix.qnn.version }}
           path: |
             build/**/CMakeFiles/CMakeOutput.log
             build/**/CMakeFiles/CMakeError.log
