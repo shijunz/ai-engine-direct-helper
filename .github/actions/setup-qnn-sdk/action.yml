@@ -1,0 +1,105 @@
+name: 'Setup QNN SDK'
+description: >
+  Download and cache the Qualcomm AI Runtime Community SDK,
+  then expose QNN_SDK_ROOT for downstream steps.
+
+inputs:
+  version:
+    description: 'QNN Community SDK version (matches the URL path).'
+    required: false
+    default: '2.47.0.260601'
+  url:
+    description: 'Override the SDK download URL. Defaults to the Community SDK matching `version`.'
+    required: false
+    default: ''
+
+outputs:
+  qnn-sdk-root:
+    description: 'Absolute path to the extracted QNN SDK (also exported as QNN_SDK_ROOT).'
+    value: ${{ steps.expose.outputs.qnn-sdk-root }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Resolve SDK URL and install dir
+      id: vars
+      shell: pwsh
+      run: |
+        $version = "${{ inputs.version }}"
+        $url = "${{ inputs.url }}"
+        if ([string]::IsNullOrEmpty($url)) {
+          $url = "https://softwarecenter.qualcomm.com/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/$version/v$version.zip"
+        }
+        $installDir = Join-Path $env:RUNNER_TEMP "qnn-sdk-$version"
+        "url=$url"               | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+        "install-dir=$installDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+    - name: Restore QNN SDK from cache
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ steps.vars.outputs.install-dir }}
+        key: qnn-sdk-${{ inputs.version }}-${{ runner.os }}-v1
+
+    - name: Download and extract QNN SDK
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: pwsh
+      run: |
+        $url        = "${{ steps.vars.outputs.url }}"
+        $installDir = "${{ steps.vars.outputs.install-dir }}"
+        $zipPath    = Join-Path $env:RUNNER_TEMP "qnn-sdk.zip"
+
+        Write-Host "Downloading QNN SDK from $url"
+        Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
+        Write-Host "Extracting to $installDir"
+        New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+        Expand-Archive -Path $zipPath -DestinationPath $installDir -Force
+        Remove-Item $zipPath -Force
+
+    - name: Locate QNN SDK root and export
+      id: expose
+      shell: pwsh
+      run: |
+        $installDir = "${{ steps.vars.outputs.install-dir }}"
+
+        # The zip extracts as either:  <installDir>/qairt/<version>/...  or directly  <installDir>/...
+        # Probe for the directory containing the `lib/` subtree.
+        $candidates = @(
+          $installDir,
+          (Join-Path $installDir "qairt"),
+          (Join-Path $installDir "qairt/${{ inputs.version }}")
+        )
+        $sdkRoot = $null
+        foreach ($c in $candidates) {
+          if ((Test-Path (Join-Path $c "lib")) -and (Test-Path (Join-Path $c "include"))) {
+            $sdkRoot = (Resolve-Path $c).Path
+            break
+          }
+        }
+        if (-not $sdkRoot) {
+          # Fallback: walk one level deep looking for `lib/`.
+          Get-ChildItem $installDir -Directory | ForEach-Object {
+            if (-not $sdkRoot -and (Test-Path (Join-Path $_.FullName "lib"))) {
+              $sdkRoot = $_.FullName
+            }
+            if (-not $sdkRoot) {
+              Get-ChildItem $_.FullName -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+                if (-not $sdkRoot -and (Test-Path (Join-Path $_.FullName "lib"))) {
+                  $sdkRoot = $_.FullName
+                }
+              }
+            }
+          }
+        }
+        if (-not $sdkRoot) {
+          Write-Host "Failed to locate QNN SDK root under $installDir. Tree:"
+          Get-ChildItem $installDir -Recurse -Depth 2 | Select-Object FullName
+          exit 1
+        }
+
+        Write-Host "QNN_SDK_ROOT = $sdkRoot"
+        Write-Host "Contents of lib/:"
+        Get-ChildItem (Join-Path $sdkRoot "lib") | Select-Object Name
+
+        "qnn-sdk-root=$sdkRoot" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+        "QNN_SDK_ROOT=$sdkRoot" | Out-File -FilePath $env:GITHUB_ENV    -Append -Encoding utf8
