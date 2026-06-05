@@ -172,12 +172,12 @@ jobs:
 
       - name: Install runtime deps for smoke test
         shell: pwsh
-        # qai_appbuilder/__init__.py imports onnxwrapper, which imports numpy.
-        # numpy is a real runtime dep of the package but is not declared in
-        # setup.py's install_requires (yet) — install it explicitly here so
-        # the wheel can be imported.
+        # qai_appbuilder/__init__.py imports onnxwrapper, whose top-level
+        # imports include numpy and yaml. These are real runtime deps but
+        # are not declared in setup.py's install_requires (yet) — install
+        # them explicitly here so the wheel can be imported.
         run: |
-          pip install numpy
+          pip install numpy pyyaml
 
       - name: Smoke test
         shell: pwsh
