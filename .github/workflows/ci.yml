@@ -170,6 +170,15 @@ jobs:
           $whl = (Get-ChildItem dist/qai_appbuilder-*.whl | Select-Object -First 1).FullName
           pip install --force-reinstall $whl
 
+      - name: Install runtime deps for smoke test
+        shell: pwsh
+        # qai_appbuilder/__init__.py imports onnxwrapper, which imports numpy.
+        # numpy is a real runtime dep of the package but is not declared in
+        # setup.py's install_requires (yet) — install it explicitly here so
+        # the wheel can be imported.
+        run: |
+          pip install numpy
+
       - name: Smoke test
         shell: pwsh
         run: |
