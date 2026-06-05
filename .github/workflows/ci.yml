@@ -1,6 +1,6 @@
 name: CI
 
-# Stage A scope:
+# Stage A scope (current):
 #   - lint (Ubuntu, GitHub-hosted, informational only)
 #   - build the windows-x64 wheel (ARM64EC binaries, for x64 Python on X Elite)
 #       on windows-latest. Cannot smoke-test it here because windows-latest is
@@ -8,16 +8,25 @@ name: CI
 #       Smoke test for this wheel happens on real X Elite hardware in Stage B.
 #   - build the windows-arm64 wheel (native aarch64) on windows-11-arm and
 #       smoke-test it natively (the runner IS ARM64, so import works).
+#   - build the linux-aarch64 wheel on ubuntu-22.04-arm and smoke-test it.
 #
-# Matrix: Python 3.10/3.11/3.12/3.13 x QNN SDK 2.46/2.47, on each OS.
-# 4 * 2 * 2 = 16 build jobs total. fail-fast disabled so a single broken
-# combination does not mask the rest.
+# Matrix:
+#   - Windows x64 + Windows ARM64: 3 Python (3.11/3.12/3.13) x 2 QNN SDK
+#       (2.46/2.47) per OS = 12 jobs total across both Windows OSes
+#   - Linux aarch64: 1 job (py3.12 x QNN 2.47), expanded once stable
+#
+# fail-fast disabled so a single broken combination does not mask the rest.
+#
+# Smoke tests (windows-arm64 + linux-aarch64):
+#   tests/test_package_smoke.py       — pure-Python imports + constants
+#   tests/test_cpu_runtime_smoke.py   — pybind C++ extension + QNN CPU
+#                                       backend DLL/so discovery (no NPU)
 #
 # Known limitation: the Community SDK ships an upstream Genie. The Genie
 # library bundled into the wheel will be the upstream one rather than the
 # customized build referenced in BUILD.md. Smoke tests do not exercise Genie.
-# NPU end-to-end + Genie LLM tests live in Stage B and are not part of this
-# workflow.
+# NPU end-to-end + Genie LLM tests live in Stage B (self-hosted X Elite
+# runner) and are not part of this workflow.
 
 on:
   push:
@@ -57,7 +66,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.10', '3.11', '3.12', '3.13']
+        python: ['3.11', '3.12', '3.13']
         qnn:
           - version: '2.47.0.260601'
             url: ''
@@ -134,7 +143,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.10', '3.11', '3.12', '3.13']
+        python: ['3.11', '3.12', '3.13']
         qnn:
           - version: '2.47.0.260601'
             url: ''
@@ -224,6 +233,93 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: cmake-logs-win_arm64-py${{ matrix.python }}-qnn${{ matrix.qnn.version }}
+          path: |
+            build/**/CMakeFiles/CMakeOutput.log
+            build/**/CMakeFiles/CMakeError.log
+            build/**/CMakeCache.txt
+          if-no-files-found: ignore
+
+  # -----------------------------------------------------------------
+  # Linux aarch64 — single combination (py3.12 x QNN 2.47).
+  # Uses ubuntu-22.04-arm hosted runner (native ARM64).
+  # Toolchain `aarch64-oe-linux-gcc11.2` and Hexagon arch 68 follow
+  # BUILD.md's Linux example. If the Community SDK zip turns out to
+  # not include the OE Linux libs, this job will surface that as a
+  # missing-file error in the build step.
+  # -----------------------------------------------------------------
+  build-linux-arm64:
+    name: linux arm64 wheel + test · py3.12 · qnn2.47.0.260601
+    runs-on: ubuntu-22.04-arm
+    timeout-minutes: 45
+    steps:
+      - name: Checkout (with pybind11 submodule only)
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Init pybind11 submodule
+        run: git submodule update --init --depth 1 pybind/pybind11
+
+      - name: Install build toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build unzip
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Setup QNN SDK
+        uses: ./.github/actions/setup-qnn-sdk
+        with:
+          version: '2.47.0.260601'
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install wheel==0.45.1 setuptools==80.9.0 pybind11==2.13.6 build==1.4.0 "cmake>=3.21" pytest
+
+      - name: Build wheel
+        env:
+          QAI_TOOLCHAINS: aarch64-oe-linux-gcc11.2
+          QAI_HEXAGONARCH: '68'
+        run: |
+          python -m build -w --no-isolation
+
+      - name: List wheel contents
+        run: |
+          whl=$(ls dist/qai_appbuilder-*.whl | head -n1)
+          if [ -z "$whl" ]; then echo "No wheel produced in dist/"; exit 1; fi
+          echo "Built: $(basename "$whl")"
+          python -c "import sys, zipfile; print('\n'.join(zipfile.ZipFile(sys.argv[1]).namelist()))" "$whl"
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-linux_aarch64-py3.12-qnn2.47.0.260601
+          path: |
+            dist/*.whl
+            dist/*.zip
+          if-no-files-found: error
+
+      - name: Install built wheel
+        run: |
+          whl=$(ls dist/qai_appbuilder-*.whl | head -n1)
+          pip install --force-reinstall "$whl"
+
+      - name: Install runtime deps for smoke test
+        # See windows-arm64 job for rationale.
+        run: pip install numpy pyyaml
+
+      - name: Smoke test
+        run: pytest tests/test_package_smoke.py tests/test_cpu_runtime_smoke.py -v
+
+      - name: Upload CMake logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cmake-logs-linux_aarch64-py3.12-qnn2.47.0.260601
           path: |
             build/**/CMakeFiles/CMakeOutput.log
             build/**/CMakeFiles/CMakeError.log

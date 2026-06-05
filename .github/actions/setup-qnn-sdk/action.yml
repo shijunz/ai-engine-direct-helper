@@ -1,7 +1,8 @@
 name: 'Setup QNN SDK'
 description: >
   Download and cache the Qualcomm AI Runtime Community SDK,
-  then expose QNN_SDK_ROOT for downstream steps.
+  then expose QNN_SDK_ROOT for downstream steps. Supports Windows
+  and Linux hosted runners.
 
 inputs:
   version:
@@ -16,13 +17,18 @@ inputs:
 outputs:
   qnn-sdk-root:
     description: 'Absolute path to the extracted QNN SDK (also exported as QNN_SDK_ROOT).'
-    value: ${{ steps.expose.outputs.qnn-sdk-root }}
+    value: ${{ steps.expose-windows.outputs.qnn-sdk-root || steps.expose-linux.outputs.qnn-sdk-root }}
 
 runs:
   using: 'composite'
   steps:
-    - name: Resolve SDK URL and install dir
-      id: vars
+    # -----------------------------------------------------------------
+    # Resolve URL and install dir (OS-agnostic; written in pwsh because
+    # GitHub-hosted ubuntu runners ship pwsh preinstalled).
+    # -----------------------------------------------------------------
+    - name: Resolve SDK URL and install dir (Windows)
+      id: vars-windows
+      if: runner.os == 'Windows'
       shell: pwsh
       run: |
         $version = "${{ inputs.version }}"
@@ -34,19 +40,39 @@ runs:
         "url=$url"               | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
         "install-dir=$installDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
+    - name: Resolve SDK URL and install dir (Linux)
+      id: vars-linux
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        version="${{ inputs.version }}"
+        url="${{ inputs.url }}"
+        if [ -z "$url" ]; then
+          url="https://softwarecenter.qualcomm.com/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/${version}/v${version}.zip"
+        fi
+        install_dir="${RUNNER_TEMP}/qnn-sdk-${version}"
+        echo "url=${url}" >> "$GITHUB_OUTPUT"
+        echo "install-dir=${install_dir}" >> "$GITHUB_OUTPUT"
+
+    # -----------------------------------------------------------------
+    # Cache (single step; path/key resolved per-OS via the two steps above).
+    # -----------------------------------------------------------------
     - name: Restore QNN SDK from cache
       id: cache
       uses: actions/cache@v4
       with:
-        path: ${{ steps.vars.outputs.install-dir }}
+        path: ${{ steps.vars-windows.outputs.install-dir || steps.vars-linux.outputs.install-dir }}
         key: qnn-sdk-${{ inputs.version }}-${{ runner.os }}-v1
 
-    - name: Download and extract QNN SDK
-      if: steps.cache.outputs.cache-hit != 'true'
+    # -----------------------------------------------------------------
+    # Download + extract — OS-specific so .so permissions survive on Linux.
+    # -----------------------------------------------------------------
+    - name: Download and extract QNN SDK (Windows)
+      if: runner.os == 'Windows' && steps.cache.outputs.cache-hit != 'true'
       shell: pwsh
       run: |
-        $url        = "${{ steps.vars.outputs.url }}"
-        $installDir = "${{ steps.vars.outputs.install-dir }}"
+        $url        = "${{ steps.vars-windows.outputs.url }}"
+        $installDir = "${{ steps.vars-windows.outputs.install-dir }}"
         $zipPath    = Join-Path $env:RUNNER_TEMP "qnn-sdk.zip"
 
         Write-Host "Downloading QNN SDK from $url"
@@ -56,14 +82,31 @@ runs:
         Expand-Archive -Path $zipPath -DestinationPath $installDir -Force
         Remove-Item $zipPath -Force
 
-    - name: Locate QNN SDK root and export
-      id: expose
+    - name: Download and extract QNN SDK (Linux)
+      if: runner.os == 'Linux' && steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        url="${{ steps.vars-linux.outputs.url }}"
+        install_dir="${{ steps.vars-linux.outputs.install-dir }}"
+        zip_path="${RUNNER_TEMP}/qnn-sdk.zip"
+
+        echo "Downloading QNN SDK from $url"
+        curl -fsSL "$url" -o "$zip_path"
+        echo "Extracting to $install_dir"
+        mkdir -p "$install_dir"
+        unzip -q "$zip_path" -d "$install_dir"
+        rm -f "$zip_path"
+
+    # -----------------------------------------------------------------
+    # Locate QNN_SDK_ROOT — also OS-specific because of path / probe syntax.
+    # -----------------------------------------------------------------
+    - name: Locate QNN SDK root and export (Windows)
+      id: expose-windows
+      if: runner.os == 'Windows'
       shell: pwsh
       run: |
-        $installDir = "${{ steps.vars.outputs.install-dir }}"
+        $installDir = "${{ steps.vars-windows.outputs.install-dir }}"
 
-        # The zip extracts as either:  <installDir>/qairt/<version>/...  or directly  <installDir>/...
-        # Probe for the directory containing the `lib/` subtree.
         $candidates = @(
           $installDir,
           (Join-Path $installDir "qairt"),
@@ -77,7 +120,6 @@ runs:
           }
         }
         if (-not $sdkRoot) {
-          # Fallback: walk one level deep looking for `lib/`.
           Get-ChildItem $installDir -Directory | ForEach-Object {
             if (-not $sdkRoot -and (Test-Path (Join-Path $_.FullName "lib"))) {
               $sdkRoot = $_.FullName
@@ -103,3 +145,39 @@ runs:
 
         "qnn-sdk-root=$sdkRoot" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
         "QNN_SDK_ROOT=$sdkRoot" | Out-File -FilePath $env:GITHUB_ENV    -Append -Encoding utf8
+
+    - name: Locate QNN SDK root and export (Linux)
+      id: expose-linux
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        install_dir="${{ steps.vars-linux.outputs.install-dir }}"
+        version="${{ inputs.version }}"
+
+        sdk_root=""
+        for c in "$install_dir" "$install_dir/qairt" "$install_dir/qairt/$version"; do
+          if [ -d "$c/lib" ] && [ -d "$c/include" ]; then
+            sdk_root="$(cd "$c" && pwd)"
+            break
+          fi
+        done
+
+        if [ -z "$sdk_root" ]; then
+          # Fallback: scan one or two levels deep for a dir containing lib/.
+          while IFS= read -r d; do
+            if [ -d "$d/lib" ]; then sdk_root="$d"; break; fi
+          done < <(find "$install_dir" -mindepth 1 -maxdepth 2 -type d 2>/dev/null)
+        fi
+
+        if [ -z "$sdk_root" ]; then
+          echo "Failed to locate QNN SDK root under $install_dir. Tree:"
+          find "$install_dir" -maxdepth 3 -type d
+          exit 1
+        fi
+
+        echo "QNN_SDK_ROOT = $sdk_root"
+        echo "Contents of lib/:"
+        ls -1 "$sdk_root/lib"
+
+        echo "qnn-sdk-root=$sdk_root" >> "$GITHUB_OUTPUT"
+        echo "QNN_SDK_ROOT=$sdk_root" >> "$GITHUB_ENV"
