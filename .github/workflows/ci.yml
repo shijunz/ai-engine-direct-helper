@@ -2,15 +2,18 @@ name: CI
 
 # Stage A scope:
 #   - lint (Ubuntu, GitHub-hosted)
-#   - build a windows-x64 wheel (windows-latest, GitHub-hosted) using the
-#     Qualcomm AI Runtime Community SDK fetched from softwarecenter.qualcomm.com
-#   - smoke-test the wheel via tests/test_package_smoke.py
+#   - build the windows-x64 wheel (ARM64EC binaries, for x64 Python on X Elite)
+#       on windows-latest. Cannot smoke-test it here because windows-latest is
+#       x86-64 hardware and ARM64EC binaries crash on import (access violation).
+#       Smoke test for this wheel happens on real X Elite hardware in Stage B.
+#   - build the windows-arm64 wheel (native aarch64) on windows-11-arm and
+#       smoke-test it natively (the runner IS ARM64, so import works).
 #
 # Known limitation: the Community SDK ships an upstream Genie. The Genie
 # library bundled into the wheel will be the upstream one rather than the
-# customized build referenced in BUILD.md. Smoke tests do not exercise Genie,
-# so this is fine here. NPU end-to-end + Genie LLM tests live in Stage B
-# (self-hosted X Elite runner) and are intentionally not part of this workflow.
+# customized build referenced in BUILD.md. Smoke tests do not exercise Genie.
+# NPU end-to-end + Genie LLM tests live in Stage B and are not part of this
+# workflow.
 
 on:
   push:
@@ -39,7 +42,7 @@ jobs:
         run: ruff check script/ tests/ samples/python/utils/
 
   build-windows-x64:
-    name: Build wheel (windows x64)
+    name: Build wheel (windows x64, ARM64EC)
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -67,7 +70,7 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          pip install wheel==0.45.1 setuptools==80.9.0 pybind11==2.13.6 build==1.4.0 "cmake>=3.21" pytest
+          pip install wheel==0.45.1 setuptools==80.9.0 pybind11==2.13.6 build==1.4.0 "cmake>=3.21"
 
       - name: Build wheel
         shell: pwsh
@@ -94,6 +97,73 @@ jobs:
             dist/*.zip
           if-no-files-found: error
 
+      - name: Upload CMake logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cmake-logs-win_amd64
+          path: |
+            build/**/CMakeFiles/CMakeOutput.log
+            build/**/CMakeFiles/CMakeError.log
+            build/**/CMakeCache.txt
+          if-no-files-found: ignore
+
+  build-windows-arm64:
+    name: Build & smoke-test wheel (windows arm64)
+    runs-on: windows-11-arm
+    timeout-minutes: 60
+    steps:
+      - name: Checkout (with pybind11 submodule only)
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Init pybind11 submodule
+        shell: pwsh
+        run: |
+          git submodule update --init --depth 1 pybind/pybind11
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: 'arm64'
+
+      - name: Setup QNN SDK
+        uses: ./.github/actions/setup-qnn-sdk
+        with:
+          version: '2.47.0.260601'
+
+      - name: Install build dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install wheel==0.45.1 setuptools==80.9.0 pybind11==2.13.6 build==1.4.0 "cmake>=3.21" pytest
+
+      - name: Build wheel
+        shell: pwsh
+        env:
+          QAI_TOOLCHAINS: aarch64-windows-msvc
+          QAI_HEXAGONARCH: '81'
+        run: |
+          python -m build -w --no-isolation
+
+      - name: List wheel contents
+        shell: pwsh
+        run: |
+          $whl = Get-ChildItem dist/qai_appbuilder-*.whl | Select-Object -First 1
+          if (-not $whl) { Write-Error "No wheel produced in dist/"; exit 1 }
+          Write-Host "Built: $($whl.Name)"
+          python -c "import sys, zipfile; [print(n) for n in zipfile.ZipFile(sys.argv[1]).namelist()]" $whl.FullName
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-win_arm64
+          path: |
+            dist/*.whl
+            dist/*.zip
+          if-no-files-found: error
+
       - name: Install built wheel
         shell: pwsh
         run: |
@@ -109,7 +179,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: cmake-logs-win_amd64
+          name: cmake-logs-win_arm64
           path: |
             build/**/CMakeFiles/CMakeOutput.log
             build/**/CMakeFiles/CMakeError.log
