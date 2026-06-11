@@ -63,7 +63,10 @@ jobs:
 
   build-windows-x64:
     name: x64 wheel · py${{ matrix.python }} · qnn${{ matrix.qnn.version }}
-    runs-on: windows-latest
+    # Pin to windows-2022 explicitly. windows-latest is migrating to
+    # windows-2025; during the rollover, CMake's VS-instance discovery
+    # ("could not find any instance of Visual Studio") gets flaky.
+    runs-on: windows-2022
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -89,6 +92,17 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           architecture: 'x64'
+
+      # Explicitly stage MSVC for the amd64 host -> arm64 target cross
+      # toolchain. CMake's VS-instance discovery has been flaky on the
+      # windows-latest -> windows-2025 transition; running vcvarsall up
+      # front and exporting its env via GITHUB_ENV makes the build
+      # robust to that. ARM64EC binaries link against the ARM64 toolset
+      # so amd64_arm64 is the correct vcvars arch.
+      - name: Setup MSVC (amd64_arm64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64_arm64
 
       - name: Setup QNN SDK
         uses: ./.github/actions/setup-qnn-sdk
