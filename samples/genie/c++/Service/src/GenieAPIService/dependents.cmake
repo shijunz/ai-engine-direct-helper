@@ -224,19 +224,33 @@ endif ()
 
 if (MSVC)
     if (USE_MNN)
-        # Prefer the ARM64-hosted Llvm subcomponent if installed; otherwise
-        # fall back to the x64-hosted one which every modern VS edition
-        # ships. Both produce ARM64 binaries when invoked through cmake's
-        # cross-compile setup below.
-        set(MSVC_CLANG_COMPILER "${VS_VC_PATH}/Tools/Llvm/ARM64/bin/clang.exe")
-        set(MSVC_CLANG_LINKER   "${VS_VC_PATH}/Tools/Llvm/ARM64/bin/lld.exe")
-        if (NOT EXISTS "${MSVC_CLANG_COMPILER}")
-            set(MSVC_CLANG_COMPILER "${VS_VC_PATH}/Tools/Llvm/x64/bin/clang.exe")
-            set(MSVC_CLANG_LINKER   "${VS_VC_PATH}/Tools/Llvm/x64/bin/lld.exe")
+        # Pick a clang.exe that can actually run on the build host.
+        # The Llvm subcomponent that VS ships comes in two flavors:
+        #   Tools/Llvm/x64/bin/clang.exe   - x64-host binary (runs on every Windows-x64 dev/CI machine)
+        #   Tools/Llvm/ARM64/bin/clang.exe - ARM64-host binary (only runs on ARM64 Windows)
+        # We need the one whose host arch matches CMAKE_HOST_SYSTEM_PROCESSOR.
+        # Trying to execute an ARM64-host clang on x64 Windows fails with
+        # "This version of %1 is not compatible with the version of Windows you're running."
+        # Note: the *target* arch is ARM64 either way — that's the -A ARM64 cross-compile
+        # the outer cmake sets up; both host flavors produce ARM64 output.
+        if (CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(ARM64|aarch64)$")
+            set(_clang_host_dirs "ARM64" "x64")  # prefer ARM64 host on ARM64 boxes
+        else ()
+            set(_clang_host_dirs "x64" "ARM64")  # x64 boxes (and the GitHub windows-2022 runner)
         endif ()
-        if (NOT EXISTS "${MSVC_CLANG_COMPILER}")
+        set(MSVC_CLANG_COMPILER "")
+        set(MSVC_CLANG_LINKER "")
+        foreach (_h IN LISTS _clang_host_dirs)
+            set(_cand "${VS_VC_PATH}/Tools/Llvm/${_h}/bin/clang.exe")
+            if (EXISTS "${_cand}")
+                set(MSVC_CLANG_COMPILER "${_cand}")
+                set(MSVC_CLANG_LINKER   "${VS_VC_PATH}/Tools/Llvm/${_h}/bin/lld.exe")
+                break ()
+            endif ()
+        endforeach ()
+        if (NOT MSVC_CLANG_COMPILER)
             message(FATAL_ERROR
-                "USE_MNN requires VS Llvm clang at ${VS_VC_PATH}/Tools/Llvm/{ARM64,x64}/bin/clang.exe, "
+                "USE_MNN requires VS Llvm clang at ${VS_VC_PATH}/Tools/Llvm/{x64,ARM64}/bin/clang.exe, "
                 "but neither was found. Install the 'C++ Clang tools for Windows' VS component, or set "
                 "VCINSTALLDIR to a VC install that has it.")
         endif ()
