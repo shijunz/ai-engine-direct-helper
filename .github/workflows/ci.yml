@@ -14,6 +14,8 @@ name: CI
 #   - build samples/genie/c++/Service (GenieAPIService) on windows-2022
 #     cross-compiled to ARM64, per samples/genie/c++/docs/BUILD.md. Pulls
 #     ~11 genie/c++/External/* submodules (llama.cpp, MNN, curl, ...).
+#     Built with USE_MNN=ON + USE_GGUF=ON so the binary supports all
+#     three model backends (BIN/MNN/GGUF).
 #
 # Matrix:
 #   - Windows x64 + Windows ARM64: 3 Python (3.11/3.12/3.13) x 2 QNN SDK
@@ -468,7 +470,9 @@ jobs:
   build-genie-service-windows-arm64:
     name: genie c++ Service · windows arm64 · qnn2.47.0.260601
     runs-on: windows-2022
-    timeout-minutes: 60
+    # Bumped from 60: MNN + llama.cpp third-party builds add significant
+    # compile time when USE_MNN/USE_GGUF are on.
+    timeout-minutes: 120
     steps:
       - name: Checkout (with genie submodules)
         uses: actions/checkout@v4
@@ -531,9 +535,15 @@ jobs:
         #   cmake -S .. -B . -A ARM64 ..
         # That command has both -S/-B and a positional source-dir which
         # newer cmake versions reject. Use the modern equivalent.
+        #
+        # USE_MNN and USE_GGUF are enabled by default in this CI per
+        # project owner: GenieAPIService should ship with bin/mnn/gguf
+        # all three backends. Trade-off: MNN + llama.cpp third-party
+        # builds add ~30-45 min to wall-clock time (hence the bumped
+        # timeout above).
         run: |
           if not exist build mkdir build
-          cmake -S . -B build -A ARM64
+          cmake -S . -B build -A ARM64 -DUSE_MNN=ON -DUSE_GGUF=ON
 
       - name: Build GenieAPIService
         shell: cmd
