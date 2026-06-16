@@ -481,11 +481,23 @@ jobs:
   # actually do anything). Real validation lives in Stage B.
   # -----------------------------------------------------------------
   build-genie-service-windows-arm64:
-    name: genie c++ Service · windows arm64 · qnn2.47.0.260601
+    name: genie c++ Service · windows arm64 · qnn${{ matrix.qnn.version }}
     runs-on: windows-2022
     # Bumped from 60: MNN + llama.cpp third-party builds add significant
     # compile time when USE_MNN/USE_GGUF are on.
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        # Mirrors the wheel matrices' QNN SDK list. See build-windows-x64
+        # above for the genie-url convention.
+        qnn:
+          - version: '2.47.0.260601'
+            url: ''
+            genie-url: 'https://github.com/qualcomm/qai-appbuilder/releases/download/v2.47.0/QAIRT_v2.47.0.260601.zip'
+          - version: '2.46.0.260424'
+            url: 'https://apigwx-aws.qualcomm.com/qsc/public/v1/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/2.46.0.260424/v2.46.0.260424.zip'
+            genie-url: ''
     steps:
       - name: Checkout (with genie submodules)
         uses: actions/checkout@v4
@@ -509,9 +521,10 @@ jobs:
       - name: Setup QNN SDK
         uses: ./.github/actions/setup-qnn-sdk
         with:
-          version: '2.47.0.260601'
-          genie-runtime-url: 'https://github.com/qualcomm/qai-appbuilder/releases/download/v2.47.0/QAIRT_v2.47.0.260601.zip'
-          genie-runtime-version: '2.47.0.260601_v73'
+          version: ${{ matrix.qnn.version }}
+          url: ${{ matrix.qnn.url }}
+          genie-runtime-url: ${{ matrix.qnn.genie-url }}
+          genie-runtime-version: ${{ matrix.qnn.version }}_v73
 
       - name: Append trailing slash to QNN_SDK_ROOT
         shell: pwsh
@@ -580,7 +593,7 @@ jobs:
       - name: Upload GenieService artifact
         uses: actions/upload-artifact@v4
         with:
-          name: GenieService-windows-arm64-qnn2.47.0.260601
+          name: GenieService-windows-arm64-qnn${{ matrix.qnn.version }}
           path: samples/genie/c++/Service/GenieService_v*/**
           if-no-files-found: error
 
@@ -588,7 +601,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: cmake-logs-genie-service-windows-arm64
+          name: cmake-logs-genie-service-windows-arm64-qnn${{ matrix.qnn.version }}
           path: |
             samples/genie/c++/Service/build/**/CMakeFiles/CMakeOutput.log
             samples/genie/c++/Service/build/**/CMakeFiles/CMakeError.log
