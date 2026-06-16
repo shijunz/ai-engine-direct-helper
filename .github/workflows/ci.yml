@@ -17,6 +17,10 @@ name: CI
 #     Built with USE_MNN=ON + USE_GGUF=ON so the binary supports all
 #     three model backends (BIN/MNN/GGUF).
 #
+# Release: pushing a `v*` tag (e.g. `git tag v2.47.0 && git push --tags`)
+# additionally triggers the `release` job, which gathers every build
+# artifact and publishes a GitHub Release at that tag.
+#
 # Matrix:
 #   - Windows x64 + Windows ARM64: 3 Python (3.11/3.12/3.13) x 2 QNN SDK
 #       (2.46/2.47) per OS = 12 jobs total across both Windows OSes
@@ -581,3 +585,59 @@ jobs:
             samples/genie/c++/Service/build/**/CMakeFiles/CMakeError.log
             samples/genie/c++/Service/build/**/CMakeCache.txt
           if-no-files-found: ignore
+
+  # -----------------------------------------------------------------
+  # Release — only runs when a `v*` tag is pushed. Collects every
+  # artifact from the build jobs above and attaches them to a new
+  # GitHub Release at that tag.
+  #
+  # Trigger: push of a tag matching v*  (e.g. `git tag v2.47.0 && git push --tags`)
+  # Skip:    every regular branch push and pull_request — the `if:` below
+  #          gates the whole job.
+  # -----------------------------------------------------------------
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - build-windows-x64
+      - build-windows-arm64
+      - build-linux-arm64
+      - build-android-arm64v8a
+      - build-genie-service-windows-arm64
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # required for action-gh-release to create the Release
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifacts for release
+        shell: bash
+        # actions/download-artifact@v4 lands each artifact in its own
+        # subdir. action-gh-release wants a flat file list; copy the
+        # *.whl / *.zip / *.so / GenieService dirs into a single dir.
+        run: |
+          mkdir -p release
+          # wheels and release zips from wheel jobs
+          find artifacts -type f \( -name '*.whl' -o -name 'QAI_AppBuilder-*.zip' \) -exec cp -v {} release/ \;
+          # android .so — rename to include the artifact label so it doesn't collide
+          if [ -f artifacts/libappbuilder-android-arm64v8a-qnn2.47.0.260601/libappbuilder.so ]; then
+            cp -v artifacts/libappbuilder-android-arm64v8a-qnn2.47.0.260601/libappbuilder.so \
+                  release/libappbuilder-android-arm64v8a-qnn2.47.0.260601.so
+          fi
+          # Genie c++ Service: zip the whole tree
+          genie_dir=$(find artifacts -type d -name 'GenieService-windows-arm64-*' | head -n1)
+          if [ -n "$genie_dir" ]; then
+            (cd "$genie_dir" && zip -qr "${GITHUB_WORKSPACE}/release/GenieService-windows-arm64-qnn2.47.0.260601.zip" .)
+          fi
+          echo "Release payload:"
+          ls -lh release/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
