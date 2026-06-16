@@ -212,10 +212,34 @@ endif ()
 set(VS_VC_PATH "C:/Program Files/Microsoft Visual Studio/2022/Community/VC")
 set(VS_VC_BUILD_TOOL_PATH "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC")
 
+# Honour the environment vcvarsall.bat exports so this works on any VS
+# edition (Community / Professional / Enterprise / BuildTools). VSINSTALLDIR
+# points at the VS install root (...\\2022\\Enterprise\\), VCINSTALLDIR
+# points at its VC subdir. Fall back to the hard-coded Community paths
+# above when neither is set (legacy local-dev case).
+if (DEFINED ENV{VCINSTALLDIR} AND EXISTS "$ENV{VCINSTALLDIR}")
+    file(TO_CMAKE_PATH "$ENV{VCINSTALLDIR}" VS_VC_PATH)
+    string(REGEX REPLACE "/+$" "" VS_VC_PATH "${VS_VC_PATH}")
+endif ()
+
 if (MSVC)
     if (USE_MNN)
-        set(MSVC_CLANG_COMPILER ${VS_VC_PATH}/Tools/Llvm/ARM64/bin/clang.exe)
-        set(MSVC_CLANG_LINKER ${VS_VC_PATH}/Tools/Llvm/ARM64/bin/lld.exe)
+        # Prefer the ARM64-hosted Llvm subcomponent if installed; otherwise
+        # fall back to the x64-hosted one which every modern VS edition
+        # ships. Both produce ARM64 binaries when invoked through cmake's
+        # cross-compile setup below.
+        set(MSVC_CLANG_COMPILER "${VS_VC_PATH}/Tools/Llvm/ARM64/bin/clang.exe")
+        set(MSVC_CLANG_LINKER   "${VS_VC_PATH}/Tools/Llvm/ARM64/bin/lld.exe")
+        if (NOT EXISTS "${MSVC_CLANG_COMPILER}")
+            set(MSVC_CLANG_COMPILER "${VS_VC_PATH}/Tools/Llvm/x64/bin/clang.exe")
+            set(MSVC_CLANG_LINKER   "${VS_VC_PATH}/Tools/Llvm/x64/bin/lld.exe")
+        endif ()
+        if (NOT EXISTS "${MSVC_CLANG_COMPILER}")
+            message(FATAL_ERROR
+                "USE_MNN requires VS Llvm clang at ${VS_VC_PATH}/Tools/Llvm/{ARM64,x64}/bin/clang.exe, "
+                "but neither was found. Install the 'C++ Clang tools for Windows' VS component, or set "
+                "VCINSTALLDIR to a VC install that has it.")
+        endif ()
             ExternalProject_Add(Libmnn
                     SOURCE_DIR ${G_EXTERNAL_DIR}/mnn
                     CMAKE_GENERATOR Ninja
