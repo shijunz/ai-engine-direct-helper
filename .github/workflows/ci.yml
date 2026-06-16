@@ -81,10 +81,15 @@ jobs:
       matrix:
         python: ['3.11', '3.12', '3.13']
         qnn:
+          # genie-url is empty until a matching QAIRT_Runtime_<sdk>_v73.zip
+          # exists. Filling either entry below enables the customized Genie
+          # overlay for that row only — see setup-qnn-sdk action for details.
           - version: '2.47.0.260601'
             url: ''
+            genie-url: ''
           - version: '2.46.0.260424'
             url: 'https://apigwx-aws.qualcomm.com/qsc/public/v1/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/2.46.0.260424/v2.46.0.260424.zip'
+            genie-url: ''
     steps:
       - name: Checkout (with pybind11 submodule only)
         uses: actions/checkout@v4
@@ -117,6 +122,8 @@ jobs:
         with:
           version: ${{ matrix.qnn.version }}
           url: ${{ matrix.qnn.url }}
+          genie-runtime-url: ${{ matrix.qnn.genie-url }}
+          genie-runtime-version: ${{ matrix.qnn.version }}_v73
 
       - name: Install build dependencies
         shell: pwsh
@@ -175,10 +182,13 @@ jobs:
       matrix:
         python: ['3.11', '3.12', '3.13']
         qnn:
+          # See windows-x64 matrix above for the genie-url convention.
           - version: '2.47.0.260601'
             url: ''
+            genie-url: ''
           - version: '2.46.0.260424'
             url: 'https://apigwx-aws.qualcomm.com/qsc/public/v1/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/2.46.0.260424/v2.46.0.260424.zip'
+            genie-url: ''
     steps:
       - name: Checkout (with pybind11 submodule only)
         uses: actions/checkout@v4
@@ -200,6 +210,8 @@ jobs:
         with:
           version: ${{ matrix.qnn.version }}
           url: ${{ matrix.qnn.url }}
+          genie-runtime-url: ${{ matrix.qnn.genie-url }}
+          genie-runtime-version: ${{ matrix.qnn.version }}_v73
 
       - name: Install build dependencies
         shell: pwsh
