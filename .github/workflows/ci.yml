@@ -556,6 +556,11 @@ jobs:
         # Community / BuildTools, so both probes miss and cmake fails.
         # Stage the Enterprise file into the BuildTools location so the
         # `else` branch can read it. Pure CI workaround; no source change.
+        #
+        # Also: dependents.cmake (in the if(USE_MNN) branch and the
+        # MSVC.OpenMP.LLVM EXTERNAL_BIN entry) hard-codes the Community VC
+        # path as VS_VC_PATH. Symlink Enterprise/VC at the Community path
+        # so those hard-coded references resolve.
         run: |
           $enterprise = 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\Microsoft.VCRedistVersion.default.txt'
           $btDir      = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build'
@@ -569,6 +574,28 @@ jobs:
             Write-Host "Content: $(Get-Content $btFile)"
           } else {
             Write-Warning "Enterprise VCRedistVersion file not found at $enterprise — Genie Service USE_GGUF configure will likely fail."
+          }
+
+          # Symlink Enterprise VC at the Community VC path so
+          # dependents.cmake's hard-coded VS_VC_PATH resolves. Required by
+          # USE_MNN's clang/lld lookup and the OpenMP LLVM dll reference.
+          $entVcDir = 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC'
+          $commVsDir = 'C:\Program Files\Microsoft Visual Studio\2022\Community'
+          $commVcDir = Join-Path $commVsDir 'VC'
+          if (-not (Test-Path $commVcDir)) {
+            if (-not (Test-Path $commVsDir)) {
+              New-Item -ItemType Directory -Force -Path $commVsDir | Out-Null
+            }
+            cmd /c mklink /D `"$commVcDir`" `"$entVcDir`"
+            Write-Host "Symlinked: $commVcDir -> $entVcDir"
+          }
+          # Verify the MNN clang lookup path now resolves.
+          $mnnClang = Join-Path $commVcDir 'Tools\Llvm\ARM64\bin\clang.exe'
+          if (Test-Path $mnnClang) {
+            Write-Host "MNN clang found at: $mnnClang"
+          } else {
+            Write-Warning "MNN clang NOT found at $mnnClang — Enterprise install may not include the ARM64 Llvm component."
+            Get-ChildItem (Join-Path $entVcDir 'Tools') -Directory -ErrorAction SilentlyContinue | Select-Object Name
           }
 
       - name: Install build helpers
