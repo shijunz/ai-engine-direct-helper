@@ -50,6 +50,10 @@
 | `6fcd17e` | 加 [`tests/test_cpu_runtime_smoke.py`](../tests/test_cpu_runtime_smoke.py) ——「Stage B-lite」深度 CPU smoke：验证 pybind 层可调 + 绑定的 `QnnCpu.dll`/`QnnSystem.dll` 在 wheel 里可发现 |
 | `c9942d8` | Linux aarch64 wheel build+test job (`ubuntu-22.04-arm`, py3.12, QNN 2.47)；删 Python 3.10；setup-qnn-sdk action 扩展支持 bash/Linux |
 | `(android)` | Android arm64-v8a `libappbuilder.so` build job (`ubuntu-latest` + NDK r26d via `nttld/setup-ndk@v1`)，无测试（需要 Android 设备） |
+| `bdb96b0` | Android `QNN_SDK_ROOT` 加结尾斜杠 —— 修 `make/Android.mk:14` 的字符串拼接路径问题 |
+| `7f86b89` | x64 钉到 `windows-2022` + 显式 `msvc-dev-cmd amd64_arm64` —— 修 windows-latest 迁移期 CMake 找不到 VS 实例的偶发问题 |
+| `3b25151` | 顶层 env 加 `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` —— 消除 `actions/*@v4` Node 20 deprecation warning |
+| `(genie-overlay)` | setup-qnn-sdk 加 Genie overlay 步骤：下载 [QAIRT_Runtime v2.38.0_v73](https://github.com/quic/ai-engine-direct-helper/releases/download/v2.38.0/QAIRT_Runtime_2.38.0_v73.zip)，覆盖 Community SDK 自带的 `Genie.dll`/`Genie.lib`。**桩实现**：v2.38.0 用作 placeholder，未来收到 2.46/2.47 对应 zip 后改 action 默认 URL 即可。Linux 暂跳过（v2.38.0 zip 只有 Windows 二进制） |
 
 ---
 
