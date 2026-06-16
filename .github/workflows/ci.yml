@@ -133,17 +133,23 @@ jobs:
           python -m build -w --no-isolation
 
       - name: List wheel contents
+        id: list-x64
         shell: pwsh
         run: |
           $whl = Get-ChildItem dist/qai_appbuilder-*.whl | Select-Object -First 1
           if (-not $whl) { Write-Error "No wheel produced in dist/"; exit 1 }
           Write-Host "Built: $($whl.Name)"
           python -c "import sys, zipfile; [print(n) for n in zipfile.ZipFile(sys.argv[1]).namelist()]" $whl.FullName
+          # Expose the wheel basename (no .whl suffix) so upload-artifact can
+          # mirror the canonical wheel filename: e.g.
+          #   qai_appbuilder-2.47.0-cp312-cp312-win_amd64
+          $stem = [System.IO.Path]::GetFileNameWithoutExtension($whl.Name)
+          "wheel-stem=$stem" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wheel-win_amd64-py${{ matrix.python }}-qnn${{ matrix.qnn.version }}
+          name: ${{ steps.list-x64.outputs.wheel-stem }}-qnn${{ matrix.qnn.version }}
           path: |
             dist/*.whl
             dist/*.zip
@@ -210,17 +216,20 @@ jobs:
           python -m build -w --no-isolation
 
       - name: List wheel contents
+        id: list-arm64
         shell: pwsh
         run: |
           $whl = Get-ChildItem dist/qai_appbuilder-*.whl | Select-Object -First 1
           if (-not $whl) { Write-Error "No wheel produced in dist/"; exit 1 }
           Write-Host "Built: $($whl.Name)"
           python -c "import sys, zipfile; [print(n) for n in zipfile.ZipFile(sys.argv[1]).namelist()]" $whl.FullName
+          $stem = [System.IO.Path]::GetFileNameWithoutExtension($whl.Name)
+          "wheel-stem=$stem" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wheel-win_arm64-py${{ matrix.python }}-qnn${{ matrix.qnn.version }}
+          name: ${{ steps.list-arm64.outputs.wheel-stem }}-qnn${{ matrix.qnn.version }}
           path: |
             dist/*.whl
             dist/*.zip
@@ -312,16 +321,19 @@ jobs:
           python -m build -w --no-isolation
 
       - name: List wheel contents
+        id: list-linux
         run: |
           whl=$(ls dist/qai_appbuilder-*.whl | head -n1)
           if [ -z "$whl" ]; then echo "No wheel produced in dist/"; exit 1; fi
           echo "Built: $(basename "$whl")"
           python -c "import sys, zipfile; print('\n'.join(zipfile.ZipFile(sys.argv[1]).namelist()))" "$whl"
+          stem=$(basename "$whl" .whl)
+          echo "wheel-stem=${stem}" >> "$GITHUB_OUTPUT"
 
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wheel-linux_aarch64-py3.12-qnn2.47.0.260601
+          name: ${{ steps.list-linux.outputs.wheel-stem }}-qnn2.47.0.260601
           path: |
             dist/*.whl
             dist/*.zip
