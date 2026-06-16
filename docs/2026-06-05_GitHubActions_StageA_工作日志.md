@@ -54,6 +54,7 @@
 | `7f86b89` | x64 钉到 `windows-2022` + 显式 `msvc-dev-cmd amd64_arm64` —— 修 windows-latest 迁移期 CMake 找不到 VS 实例的偶发问题 |
 | `3b25151` | 顶层 env 加 `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` —— 消除 `actions/*@v4` Node 20 deprecation warning |
 | `(genie-overlay)` | setup-qnn-sdk 加 Genie overlay 步骤：下载 [QAIRT_Runtime v2.38.0_v73](https://github.com/quic/ai-engine-direct-helper/releases/download/v2.38.0/QAIRT_Runtime_2.38.0_v73.zip)，覆盖 Community SDK 自带的 `Genie.dll`/`Genie.lib`。**桩实现**：v2.38.0 用作 placeholder，未来收到 2.46/2.47 对应 zip 后改 action 默认 URL 即可。Linux 暂跳过（v2.38.0 zip 只有 Windows 二进制） |
+| `(genie-disable)` | **回退**：把 Genie overlay URL 默认值改成空字符串（关闭 overlay），所有 overlay 步骤加 `inputs.genie-runtime-url != ''` 守卫。原因：v2.38.0 的 `Genie.lib` 比 Community SDK 2.46/2.47 自带的旧，**少了 `GenieDialog_embeddingTokenQuery` 等新符号**，被 [`pybind/GenieBuilder.cpp`](../pybind/GenieBuilder.cpp) 引用 → ARM64EC 链接时 LNK2001 / LNK1120。结论：用旧 Genie 覆盖新 SDK 是负向移植，反而把可工作的代码破坏。等到拿到匹配版本的 zip 再启用 |
 
 ---
 
