@@ -15,16 +15,16 @@ inputs:
     default: ''
   genie-runtime-url:
     description: >
-      URL of the QAIRT_Runtime_*_v73.zip that contains the customized Genie.dll/lib
-      to overlay onto the Community SDK. BUILD.md mandates this overlay so the wheel
-      gets the quic-customized Genie that samples/genie/ depends on.
+      URL of the QAIRT zip that contains the customized Genie.dll/lib to
+      overlay onto the Community SDK on Windows. The zip is expected to
+      contain `arm64x-windows-msvc/Genie.{dll,lib}` (x64 + ARM64EC host
+      processes) and `aarch64-windows-msvc/Genie.{dll,lib}` (native
+      ARM64 processes). Linux/Android do not consume this — the customized
+      Genie is currently Windows-only, and Linux/Android builds use the
+      Genie shipped in the QNN SDK as-is.
 
-      DEFAULT IS EMPTY (overlay disabled). Reason: the v2.38.0 quic Genie zip is
-      older than the Community SDK 2.46/2.47 Genies and is MISSING newer symbols
-      (e.g. GenieDialog_embeddingTokenQuery) that the project's own pybind/
-      GenieBuilder.cpp now references. Overlaying v2.38.0 onto a 2.46/2.47 SDK
-      breaks the link step. Once a matching 2.46/2.47 build of QAIRT_Runtime_v73
-      exists, set this input (or update the default) to that URL to enable.
+      Empty value disables the overlay (the build uses the SDK-bundled
+      Genie unchanged).
     required: false
     default: ''
   genie-runtime-version:
@@ -217,20 +217,12 @@ runs:
         $stage = Join-Path $env:RUNNER_TEMP "qairt-runtime-${{ inputs.genie-runtime-version }}"
         "stage-dir=$stage" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
-    - name: Resolve Genie overlay paths and cache key (Linux)
-      id: genie-vars-linux
-      if: runner.os == 'Linux' && inputs.genie-runtime-url != ''
-      shell: bash
-      run: |
-        stage="${RUNNER_TEMP}/qairt-runtime-${{ inputs.genie-runtime-version }}"
-        echo "stage-dir=${stage}" >> "$GITHUB_OUTPUT"
-
     - name: Restore Genie overlay from cache
       id: genie-cache
-      if: inputs.genie-runtime-url != ''
+      if: runner.os == 'Windows' && inputs.genie-runtime-url != ''
       uses: actions/cache@v4
       with:
-        path: ${{ steps.genie-vars-windows.outputs.stage-dir || steps.genie-vars-linux.outputs.stage-dir }}
+        path: ${{ steps.genie-vars-windows.outputs.stage-dir }}
         key: genie-runtime-${{ inputs.genie-runtime-version }}-${{ runner.os }}-v1
 
     - name: Download Genie overlay (Windows)
@@ -246,20 +238,6 @@ runs:
         New-Item -ItemType Directory -Force -Path $stage | Out-Null
         Expand-Archive -Path $zip -DestinationPath $stage -Force
         Remove-Item $zip -Force
-
-    - name: Download Genie overlay (Linux)
-      if: runner.os == 'Linux' && inputs.genie-runtime-url != '' && steps.genie-cache.outputs.cache-hit != 'true'
-      shell: bash
-      run: |
-        url="${{ inputs.genie-runtime-url }}"
-        stage="${{ steps.genie-vars-linux.outputs.stage-dir }}"
-        zip="${RUNNER_TEMP}/qairt-runtime.zip"
-
-        echo "Downloading Genie overlay from $url"
-        curl -fsSL "$url" -o "$zip"
-        mkdir -p "$stage"
-        unzip -q "$zip" -d "$stage"
-        rm -f "$zip"
 
     - name: Apply Genie overlay (Windows)
       if: runner.os == 'Windows' && inputs.genie-runtime-url != ''
@@ -337,11 +315,3 @@ runs:
           $copied | ForEach-Object { Write-Host "  $_" }
         }
 
-    - name: Apply Genie overlay (Linux)
-      if: runner.os == 'Linux' && inputs.genie-runtime-url != ''
-      shell: bash
-      # The v2.38.0 quic Genie zip is Windows-only. There's no Linux
-      # counterpart to overlay. Print a notice and move on; the Linux
-      # build uses the SDK's bundled libGenie.so (upstream).
-      run: |
-        echo "::notice::Genie overlay is Windows-only in v2.38.0. Linux build will use the SDK-bundled libGenie.so (upstream Genie)."

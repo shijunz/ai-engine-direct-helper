@@ -81,15 +81,14 @@ jobs:
       matrix:
         python: ['3.11', '3.12', '3.13']
         qnn:
-          # genie-url is empty until a matching QAIRT_Runtime_<sdk>_v73.zip
-          # exists. Filling either entry below enables the customized Genie
-          # overlay for that row only — see setup-qnn-sdk action for details.
+          # Single SDK row for now. To add another version, copy this block.
+          # genie-url points at the customized Genie zip published by the
+          # qualcomm/qai-appbuilder release; setup-qnn-sdk extracts it and
+          # overlays Genie.dll / Genie.lib (+ headers + libGenie.so for Linux)
+          # onto the Community SDK. Leave empty to skip the overlay.
           - version: '2.47.0.260601'
             url: ''
-            genie-url: ''
-          - version: '2.46.0.260424'
-            url: 'https://apigwx-aws.qualcomm.com/qsc/public/v1/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/2.46.0.260424/v2.46.0.260424.zip'
-            genie-url: ''
+            genie-url: 'https://github.com/qualcomm/qai-appbuilder/releases/download/v2.47.0/QAIRT_v2.47.0.260601.zip'
     steps:
       - name: Checkout (with pybind11 submodule only)
         uses: actions/checkout@v4
@@ -185,10 +184,7 @@ jobs:
           # See windows-x64 matrix above for the genie-url convention.
           - version: '2.47.0.260601'
             url: ''
-            genie-url: ''
-          - version: '2.46.0.260424'
-            url: 'https://apigwx-aws.qualcomm.com/qsc/public/v1/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/2.46.0.260424/v2.46.0.260424.zip'
-            genie-url: ''
+            genie-url: 'https://github.com/qualcomm/qai-appbuilder/releases/download/v2.47.0/QAIRT_v2.47.0.260601.zip'
     steps:
       - name: Checkout (with pybind11 submodule only)
         uses: actions/checkout@v4
