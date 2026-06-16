@@ -496,6 +496,25 @@ jobs:
           genie-runtime-url: 'https://github.com/qualcomm/qai-appbuilder/releases/download/v2.47.0/QAIRT_v2.47.0.260601.zip'
           genie-runtime-version: '2.47.0.260601_v73'
 
+      - name: Append trailing slash to QNN_SDK_ROOT
+        shell: pwsh
+        # Service/src/GenieAPIService/dependents.cmake builds QNN paths by
+        # string-concatenating $ENV{QNN_SDK_ROOT} + "lib\\<abi>" with no
+        # separator (lines 17-18), so it requires QNN_SDK_ROOT to end with
+        # a path separator. setup-qnn-sdk action exports it without one
+        # (the wheel build's pathlib-based code does not care). Add it
+        # back for this job — same pattern as the Android job, just in
+        # PowerShell.
+        run: |
+          $root = $env:QNN_SDK_ROOT.TrimEnd('\','/') + '\'
+          "QNN_SDK_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "QNN_SDK_ROOT=$root"
+          if (-not (Test-Path "${root}lib\aarch64-windows-msvc\Genie.lib")) {
+            Write-Error "Expected Genie.lib not found at ${root}lib\aarch64-windows-msvc\Genie.lib"
+            Get-ChildItem "${root}lib\aarch64-windows-msvc" 2>$null | Select-Object Name
+            exit 1
+          }
+
       - name: Install build helpers
         shell: pwsh
         # Ninja: not strictly required for the VS generator path BUILD.md
