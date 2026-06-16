@@ -567,9 +567,19 @@ jobs:
         # all three backends. Trade-off: MNN + llama.cpp third-party
         # builds add ~30-45 min to wall-clock time (hence the bumped
         # timeout above).
+        #
+        # -T "ClangCL,host=x64" pins the toolset to ClangCL on an x64
+        # host. Two reasons:
+        #   1. MNN's ExternalProject_Add explicitly sets CMAKE_C_COMPILER
+        #      to <VS>/Tools/Llvm/<host>/bin/clang.exe — staying on ClangCL
+        #      at the outer build keeps the compiler family consistent
+        #      across all subprojects.
+        #   2. host=x64 selects the x64-hosted compiler binaries (the
+        #      ARM64-hosted Llvm subcomponent isn't always installed on
+        #      VS editions; the x64-hosted variant is universal).
         run: |
           if not exist build mkdir build
-          cmake -S . -B build -A ARM64 -DUSE_MNN=ON -DUSE_GGUF=ON
+          cmake -S . -B build -A ARM64 -T "ClangCL,host=x64" -DUSE_MNN=ON -DUSE_GGUF=ON
 
       - name: Build GenieAPIService
         shell: cmd
