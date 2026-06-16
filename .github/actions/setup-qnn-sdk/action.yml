@@ -19,9 +19,10 @@ inputs:
       overlay onto the Community SDK on Windows. The zip is expected to
       contain `arm64x-windows-msvc/Genie.{dll,lib}` (x64 + ARM64EC host
       processes) and `aarch64-windows-msvc/Genie.{dll,lib}` (native
-      ARM64 processes). Linux/Android do not consume this — the customized
-      Genie is currently Windows-only, and Linux/Android builds use the
-      Genie shipped in the QNN SDK as-is.
+      ARM64 processes). Linux and Android jobs do not consume this — the
+      customized Genie is Windows-only, so non-Windows builds always use
+      the Genie shipped in the QNN SDK as-is (do not pass this input
+      from Linux/Android callers).
 
       Empty value disables the overlay (the build uses the SDK-bundled
       Genie unchanged).

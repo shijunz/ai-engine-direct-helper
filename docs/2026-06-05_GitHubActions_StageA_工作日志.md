@@ -57,7 +57,7 @@
 | `(genie-overlay)` | setup-qnn-sdk 加 Genie overlay 步骤：下载 [QAIRT_Runtime v2.38.0_v73](https://github.com/quic/ai-engine-direct-helper/releases/download/v2.38.0/QAIRT_Runtime_2.38.0_v73.zip)，覆盖 Community SDK 自带的 `Genie.dll`/`Genie.lib`。**桩实现**：v2.38.0 用作 placeholder，未来收到 2.46/2.47 对应 zip 后改 action 默认 URL 即可。Linux 暂跳过（v2.38.0 zip 只有 Windows 二进制） |
 | `(genie-disable)` | **回退**：把 Genie overlay URL 默认值改成空字符串（关闭 overlay），所有 overlay 步骤加 `inputs.genie-runtime-url != ''` 守卫。原因：v2.38.0 的 `Genie.lib` 比 Community SDK 2.46/2.47 自带的旧，**少了 `GenieDialog_embeddingTokenQuery` 等新符号**，被 [`pybind/GenieBuilder.cpp`](../pybind/GenieBuilder.cpp) 引用 → ARM64EC 链接时 LNK2001 / LNK1120。结论：用旧 Genie 覆盖新 SDK 是负向移植，反而把可工作的代码破坏。等到拿到匹配版本的 zip 再启用 |
 | `e311727` | matrix 每行加 `genie-url` 字段，传给 setup-qnn-sdk，支持 per-row overlay 启用 |
-| `(genie-2.47)` | 启用 2.47 的 Genie overlay：URL 是 `https://github.com/qualcomm/qai-appbuilder/releases/download/v2.47.0/QAIRT_v2.47.0.260601.zip`（注意是新仓库 `qualcomm/qai-appbuilder`，命名也变了 —— 没了 `_Runtime_*_v73` 后缀）。**去掉 2.46 行**（按用户要求只测 2.47）。**Linux/Android 不做 overlay**：定制 Genie 包当前只发布 Windows 二进制（`arm64x-windows-msvc` + `aarch64-windows-msvc` 两个子目录），Linux/Android 继续用 SDK 自带 Genie；action.yml 中 Linux overlay 代码已删除 |
+| `(genie-2.47)` | 启用 2.47 的 Genie overlay：URL 是 `https://github.com/qualcomm/qai-appbuilder/releases/download/v2.47.0/QAIRT_v2.47.0.260601.zip`（注意是新仓库 `qualcomm/qai-appbuilder`，命名也变了 —— 没了 `_Runtime_*_v73` 后缀）。**去掉 2.46 行**（按用户要求只测 2.47）。**仅 Windows overlay**：定制 Genie 包当前只发布 Windows 二进制（`arm64x-windows-msvc` + `aarch64-windows-msvc` 两个子目录），Linux 和 Android 都不参与 overlay，统一用 SDK 自带 Genie；action.yml 中 Linux overlay 代码已删除，Android job 调用 setup-qnn-sdk 时不传 `genie-runtime-url` 参数 |
 
 ---
 
