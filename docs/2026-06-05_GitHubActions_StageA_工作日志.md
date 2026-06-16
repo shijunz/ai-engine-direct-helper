@@ -19,9 +19,10 @@
 | Windows OS | windows-2022 (x64, ARM64EC binaries) / windows-11-arm (native ARM64) | x64 build-only；ARM64 build + smoke test |
 | Linux | ubuntu-22.04-arm × py3.12 × QNN 2.47 = 1 job | toolchain `aarch64-oe-linux-gcc11.2`, hexagon 68 |
 | Android | ubuntu-latest + NDK r26d, arm64-v8a = 1 job | 不是 wheel，是 `libappbuilder.so`；不测试 |
+| Genie c++ Service | windows-2022 cross to ARM64 = 1 job | `samples/genie/c++/docs/BUILD.md` 路径；产物 `GenieService_v<version>/`；build only |
 | Genie overlay | 启用，URL = `qualcomm/qai-appbuilder` 仓库的 `QAIRT_v2.47.0.260601.zip` | 仅 Windows；Linux/Android 用 SDK 自带 Genie |
 
-3 Python × 1 QNN × 2 Windows OS = **6 Windows job** + 1 Linux + 1 Android = **8 个 build job/push**。
+3 Python × 1 QNN × 2 Windows OS = **6 Windows wheel job** + 1 Linux + 1 Android + 1 Genie Service = **9 个 build job/push**。
 
 ---
 
@@ -58,6 +59,7 @@
 | `(genie-disable)` | **回退**：把 Genie overlay URL 默认值改成空字符串（关闭 overlay），所有 overlay 步骤加 `inputs.genie-runtime-url != ''` 守卫。原因：v2.38.0 的 `Genie.lib` 比 Community SDK 2.46/2.47 自带的旧，**少了 `GenieDialog_embeddingTokenQuery` 等新符号**，被 [`pybind/GenieBuilder.cpp`](../pybind/GenieBuilder.cpp) 引用 → ARM64EC 链接时 LNK2001 / LNK1120。结论：用旧 Genie 覆盖新 SDK 是负向移植，反而把可工作的代码破坏。等到拿到匹配版本的 zip 再启用 |
 | `e311727` | matrix 每行加 `genie-url` 字段，传给 setup-qnn-sdk，支持 per-row overlay 启用 |
 | `(genie-2.47)` | 启用 2.47 的 Genie overlay：URL 是 `https://github.com/qualcomm/qai-appbuilder/releases/download/v2.47.0/QAIRT_v2.47.0.260601.zip`（注意是新仓库 `qualcomm/qai-appbuilder`，命名也变了 —— 没了 `_Runtime_*_v73` 后缀）。**去掉 2.46 行**（按用户要求只测 2.47）。**仅 Windows overlay**：定制 Genie 包当前只发布 Windows 二进制（`arm64x-windows-msvc` + `aarch64-windows-msvc` 两个子目录），Linux 和 Android 都不参与 overlay，统一用 SDK 自带 Genie；action.yml 中 Linux overlay 代码已删除，Android job 调用 setup-qnn-sdk 时不传 `genie-runtime-url` 参数 |
+| `(genie-service)` | 新增 `build-genie-service-windows-arm64` job：跟随 [`samples/genie/c++/docs/BUILD.md`](../samples/genie/c++/docs/BUILD.md)，windows-2022 + `msvc-dev-cmd amd64_arm64`，cmake `-A ARM64`。submodule 拉 `pybind/pybind11` + `samples/genie/c++/External/*` 全部（11 个，含 llama.cpp/MNN/curl 等）。产物 `Service/GenieService_v<version>/` 作为 artifact 上传。Build-only，没有测试（需要 LLM 模型 + 真 NPU） |
 
 ---
 

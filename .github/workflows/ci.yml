@@ -11,6 +11,9 @@ name: CI
 #   - build the linux-aarch64 wheel on ubuntu-22.04-arm and smoke-test it.
 #   - build android arm64-v8a libappbuilder.so via NDK r26d (no testing
 #     because exercising the .so needs an Android device).
+#   - build samples/genie/c++/Service (GenieAPIService) on windows-2022
+#     cross-compiled to ARM64, per samples/genie/c++/docs/BUILD.md. Pulls
+#     ~11 genie/c++/External/* submodules (llama.cpp, MNN, curl, ...).
 #
 # Matrix:
 #   - Windows x64 + Windows ARM64: 3 Python (3.11/3.12/3.13) x 2 QNN SDK
@@ -447,3 +450,105 @@ jobs:
           name: libappbuilder-android-arm64v8a-qnn2.47.0.260601
           path: libs/arm64-v8a/libappbuilder.so
           if-no-files-found: error
+
+  # -----------------------------------------------------------------
+  # samples/genie/c++/Service — GenieAPIService Windows ARM64 build.
+  #
+  # Follows samples/genie/c++/docs/BUILD.md. This is a separate cmake
+  # project from the wheel above: cross-compiled from windows-2022 to
+  # ARM64, with all 11 genie/c++ submodules (llama.cpp, MNN, curl,
+  # cli11, libsamplerate, dr_libs, LibrosaCpp, cpp-httplib, json, stb,
+  # CLI11) initialized. Output: Service/GenieService_v<version>/ with
+  # GenieAPIService.exe and friends.
+  #
+  # Build-only — there's no smoke test that can run on a hosted ARM
+  # runner (Service needs an LLM model + NPU on a real X Elite to
+  # actually do anything). Real validation lives in Stage B.
+  # -----------------------------------------------------------------
+  build-genie-service-windows-arm64:
+    name: genie c++ Service · windows arm64 · qnn2.47.0.260601
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - name: Checkout (with genie submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Init genie c++ + pybind11 submodules
+        shell: pwsh
+        # Only the genie/c++/External/* submodules + pybind11 are needed.
+        # pybind11 is here defensively in case any included CMake bit
+        # references it.
+        run: |
+          git submodule update --init --depth 1 pybind/pybind11
+          git submodule update --init --depth 1 --recursive samples/genie/c++/External
+
+      - name: Setup MSVC (amd64_arm64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64_arm64
+
+      - name: Setup QNN SDK
+        uses: ./.github/actions/setup-qnn-sdk
+        with:
+          version: '2.47.0.260601'
+          genie-runtime-url: 'https://github.com/qualcomm/qai-appbuilder/releases/download/v2.47.0/QAIRT_v2.47.0.260601.zip'
+          genie-runtime-version: '2.47.0.260601_v73'
+
+      - name: Install build helpers
+        shell: pwsh
+        # Ninja: not strictly required for the VS generator path BUILD.md
+        # uses (it relies on MSBuild via `cmake --build . --config Release`),
+        # but the doc lists it as a prereq so keep it installable for any
+        # subproject that switches generators.
+        run: |
+          choco install -y ninja --no-progress
+
+      - name: Configure GenieAPIService
+        shell: cmd
+        working-directory: samples/genie/c++/Service
+        # Per BUILD.md:
+        #   cmake -S .. -B . -A ARM64 ..
+        # That command has both -S/-B and a positional source-dir which
+        # newer cmake versions reject. Use the modern equivalent.
+        run: |
+          if not exist build mkdir build
+          cmake -S . -B build -A ARM64
+
+      - name: Build GenieAPIService
+        shell: cmd
+        working-directory: samples/genie/c++/Service
+        run: |
+          cmake --build build --config Release --parallel 4
+
+      - name: Verify output
+        shell: pwsh
+        working-directory: samples/genie/c++/Service
+        run: |
+          $out = Get-ChildItem -Directory -Filter "GenieService_v*" | Select-Object -First 1
+          if (-not $out) {
+            Write-Error "Expected GenieService_v*/ directory was not produced. Tree under Service/:"
+            Get-ChildItem -Recurse -Depth 2 | Select-Object FullName
+            exit 1
+          }
+          Write-Host "Output dir: $($out.FullName)"
+          Get-ChildItem $out.FullName -Recurse -File | Select-Object FullName, Length
+
+      - name: Upload GenieService artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GenieService-windows-arm64-qnn2.47.0.260601
+          path: samples/genie/c++/Service/GenieService_v*/**
+          if-no-files-found: error
+
+      - name: Upload CMake logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cmake-logs-genie-service-windows-arm64
+          path: |
+            samples/genie/c++/Service/build/**/CMakeFiles/CMakeOutput.log
+            samples/genie/c++/Service/build/**/CMakeFiles/CMakeError.log
+            samples/genie/c++/Service/build/**/CMakeCache.txt
+          if-no-files-found: ignore
