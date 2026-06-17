@@ -399,6 +399,20 @@ jobs:
   # -----------------------------------------------------------------
   build-android-arm64v8a:
     name: android arm64-v8a libappbuilder.so · qnn2.47.0.260601
+    # Temporarily disabled. Upstream make/Android.mk now contains a
+    # QAIAppSvc executable target that pulls in src/SVC/main.cpp, but
+    # that file is Windows-only (uses #pragma once at top of a .cpp,
+    # plus <tchar.h> and other Windows headers). NDK build fails:
+    #
+    #   main.cpp:9:9: error: #pragma once in main file
+    #   Utils.hpp:15:10: fatal error: 'tchar.h' file not found
+    #
+    # The pre-existing libappbuilder shared-library target itself still
+    # compiles fine; only the new QAIAppSvc target is broken. Waiting
+    # for upstream to either gate the QAIAppSvc target on Windows or
+    # make src/SVC/main.cpp cross-platform. To re-enable, change the
+    # `if:` below back to a normal trigger guard.
+    if: false
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -628,7 +642,7 @@ jobs:
       - build-windows-x64
       - build-windows-arm64
       - build-linux-arm64
-      - build-android-arm64v8a
+      # - build-android-arm64v8a   # disabled until upstream fixes SVC main.cpp on Android
       - build-genie-service-windows-arm64
     runs-on: ubuntu-latest
     permissions:
