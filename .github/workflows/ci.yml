@@ -483,9 +483,7 @@ jobs:
   build-genie-service-windows-arm64:
     name: genie c++ Service · windows arm64 · qnn${{ matrix.qnn.version }}
     runs-on: windows-2022
-    # Bumped from 60: MNN + llama.cpp third-party builds add significant
-    # compile time when USE_MNN/USE_GGUF are on.
-    timeout-minutes: 120
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -551,35 +549,8 @@ jobs:
         # uses (it relies on MSBuild via `cmake --build . --config Release`),
         # but the doc lists it as a prereq so keep it installable for any
         # subproject that switches generators.
-        #
-        # LLVM (standalone): MNN's ExternalProject in dependents.cmake
-        # needs a clang.exe whose host arch matches the build host. The
-        # Llvm subcomponent VS Enterprise ships with on the windows-2022
-        # runner is ARM64-host-only — it cannot execute on the x64
-        # runner host. choco's `llvm` package installs the upstream LLVM
-        # release with both host and target = x64-runs-on-x64, which is
-        # what we need; -T ARM64 in MNN's cmake args makes it cross-
-        # compile ARM64 output regardless.
         run: |
           choco install -y ninja --no-progress
-          choco install -y llvm  --no-progress
-          # Surface where choco put it (default: C:\Program Files\LLVM\bin)
-          $llvm = 'C:\Program Files\LLVM\bin'
-          # Use clang-cl (MSVC-compatible driver), NOT clang.exe (GNU driver).
-          # Under -A ARM64 the GNU driver pulls host-arch msvcrtd.lib by
-          # default and link fails with "machine type arm64 conflicts with x64".
-          # clang-cl honours the cmake target arch end-to-end.
-          if ((Test-Path "$llvm\clang-cl.exe") -and (Test-Path "$llvm\lld-link.exe")) {
-            "MSVC_CLANG_COMPILER=$llvm\clang-cl.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-            "MSVC_CLANG_LINKER=$llvm\lld-link.exe"   | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-            "$llvm" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-            Write-Host "Standalone LLVM clang-cl at: $llvm\clang-cl.exe"
-            & "$llvm\clang-cl.exe" --version
-            & "$llvm\lld-link.exe" --version
-          } else {
-            Write-Error "choco install llvm did not produce $llvm\clang-cl.exe and/or $llvm\lld-link.exe"
-            exit 1
-          }
 
       - name: Configure GenieAPIService
         shell: cmd
@@ -589,19 +560,16 @@ jobs:
         # That command has both -S/-B and a positional source-dir which
         # newer cmake versions reject. Use the modern equivalent.
         #
-        # USE_MNN and USE_GGUF are enabled by default in this CI per
-        # project owner: GenieAPIService should ship with bin/mnn/gguf
-        # all three backends. Trade-off: MNN + llama.cpp third-party
-        # builds add ~30-45 min to wall-clock time (hence the bumped
-        # timeout above).
-        #
-        # Note: Service's own targets stay on the default MSVC cl.exe
-        # (no -T ClangCL). Only MNN's internal ExternalProject needs
-        # clang, and dependents.cmake reads MSVC_CLANG_COMPILER from
-        # env (set above) to pick the standalone LLVM install.
+        # USE_MNN and USE_GGUF are NOT enabled here. Both bring in large
+        # third-party builds (MNN, llama.cpp) that hit toolchain / host
+        # arch issues on hosted windows-2022 runners. Service is built
+        # with the BIN backend only. To re-enable later, add:
+        #   -DUSE_MNN=ON -DUSE_GGUF=ON
+        # and revisit the LLVM/clang-cl setup that previously worked
+        # locally but stalled in CI.
         run: |
           if not exist build mkdir build
-          cmake -S . -B build -A ARM64 -DUSE_MNN=ON -DUSE_GGUF=ON
+          cmake -S . -B build -A ARM64
 
       - name: Build GenieAPIService
         shell: cmd
