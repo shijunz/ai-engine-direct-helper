@@ -224,35 +224,54 @@ endif ()
 
 if (MSVC)
     if (USE_MNN)
-        # Pick a clang.exe that can actually run on the build host.
-        # The Llvm subcomponent that VS ships comes in two flavors:
-        #   Tools/Llvm/x64/bin/clang.exe   - x64-host binary (runs on every Windows-x64 dev/CI machine)
-        #   Tools/Llvm/ARM64/bin/clang.exe - ARM64-host binary (only runs on ARM64 Windows)
-        # We need the one whose host arch matches CMAKE_HOST_SYSTEM_PROCESSOR.
-        # Trying to execute an ARM64-host clang on x64 Windows fails with
-        # "This version of %1 is not compatible with the version of Windows you're running."
-        # Note: the *target* arch is ARM64 either way — that's the -A ARM64 cross-compile
-        # the outer cmake sets up; both host flavors produce ARM64 output.
-        if (CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(ARM64|aarch64)$")
-            set(_clang_host_dirs "ARM64" "x64")  # prefer ARM64 host on ARM64 boxes
-        else ()
-            set(_clang_host_dirs "x64" "ARM64")  # x64 boxes (and the GitHub windows-2022 runner)
-        endif ()
+        # Allow the caller (CI, dev script, etc.) to inject a clang.exe path
+        # via env vars. This is the only way to use a standalone LLVM install
+        # on machines where the VS-shipped Llvm subcomponent has a
+        # mismatched host arch or is missing entirely.
         set(MSVC_CLANG_COMPILER "")
         set(MSVC_CLANG_LINKER "")
-        foreach (_h IN LISTS _clang_host_dirs)
-            set(_cand "${VS_VC_PATH}/Tools/Llvm/${_h}/bin/clang.exe")
-            if (EXISTS "${_cand}")
-                set(MSVC_CLANG_COMPILER "${_cand}")
-                set(MSVC_CLANG_LINKER   "${VS_VC_PATH}/Tools/Llvm/${_h}/bin/lld.exe")
-                break ()
+        if (DEFINED ENV{MSVC_CLANG_COMPILER} AND EXISTS "$ENV{MSVC_CLANG_COMPILER}")
+            set(MSVC_CLANG_COMPILER "$ENV{MSVC_CLANG_COMPILER}")
+            if (DEFINED ENV{MSVC_CLANG_LINKER} AND EXISTS "$ENV{MSVC_CLANG_LINKER}")
+                set(MSVC_CLANG_LINKER "$ENV{MSVC_CLANG_LINKER}")
+            else ()
+                get_filename_component(_clang_dir "${MSVC_CLANG_COMPILER}" DIRECTORY)
+                if (EXISTS "${_clang_dir}/lld.exe")
+                    set(MSVC_CLANG_LINKER "${_clang_dir}/lld.exe")
+                elseif (EXISTS "${_clang_dir}/lld-link.exe")
+                    set(MSVC_CLANG_LINKER "${_clang_dir}/lld-link.exe")
+                endif ()
             endif ()
-        endforeach ()
+            message(STATUS "USE_MNN: using clang from env: ${MSVC_CLANG_COMPILER}")
+        endif ()
+
+        # Otherwise pick a clang.exe out of the VS Llvm subcomponent that
+        # can actually run on the build host. The subcomponent ships in two
+        # flavors:
+        #   Tools/Llvm/x64/bin/clang.exe   - x64-host binary  (runs on every Windows-x64 dev/CI machine)
+        #   Tools/Llvm/ARM64/bin/clang.exe - ARM64-host binary (only runs on ARM64 Windows)
+        # The *target* arch is ARM64 either way — that's the -A ARM64
+        # cross-compile the outer cmake sets up.
+        if (NOT MSVC_CLANG_COMPILER)
+            if (CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(ARM64|aarch64)$")
+                set(_clang_host_dirs "ARM64" "x64")  # prefer ARM64 host on ARM64 boxes
+            else ()
+                set(_clang_host_dirs "x64" "ARM64")  # x64 boxes (incl. windows-2022 runner)
+            endif ()
+            foreach (_h IN LISTS _clang_host_dirs)
+                set(_cand "${VS_VC_PATH}/Tools/Llvm/${_h}/bin/clang.exe")
+                if (EXISTS "${_cand}")
+                    set(MSVC_CLANG_COMPILER "${_cand}")
+                    set(MSVC_CLANG_LINKER   "${VS_VC_PATH}/Tools/Llvm/${_h}/bin/lld.exe")
+                    break ()
+                endif ()
+            endforeach ()
+        endif ()
         if (NOT MSVC_CLANG_COMPILER)
             message(FATAL_ERROR
-                "USE_MNN requires VS Llvm clang at ${VS_VC_PATH}/Tools/Llvm/{x64,ARM64}/bin/clang.exe, "
-                "but neither was found. Install the 'C++ Clang tools for Windows' VS component, or set "
-                "VCINSTALLDIR to a VC install that has it.")
+                "USE_MNN requires a clang.exe. Set MSVC_CLANG_COMPILER env var to a standalone "
+                "clang, or install the 'C++ Clang tools for Windows' VS component so "
+                "${VS_VC_PATH}/Tools/Llvm/{x64,ARM64}/bin/clang.exe exists.")
         endif ()
             ExternalProject_Add(Libmnn
                     SOURCE_DIR ${G_EXTERNAL_DIR}/mnn

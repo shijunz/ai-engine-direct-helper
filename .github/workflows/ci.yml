@@ -551,8 +551,29 @@ jobs:
         # uses (it relies on MSBuild via `cmake --build . --config Release`),
         # but the doc lists it as a prereq so keep it installable for any
         # subproject that switches generators.
+        #
+        # LLVM (standalone): MNN's ExternalProject in dependents.cmake
+        # needs a clang.exe whose host arch matches the build host. The
+        # Llvm subcomponent VS Enterprise ships with on the windows-2022
+        # runner is ARM64-host-only — it cannot execute on the x64
+        # runner host. choco's `llvm` package installs the upstream LLVM
+        # release with both host and target = x64-runs-on-x64, which is
+        # what we need; -T ARM64 in MNN's cmake args makes it cross-
+        # compile ARM64 output regardless.
         run: |
           choco install -y ninja --no-progress
+          choco install -y llvm  --no-progress
+          # Surface where choco put it (default: C:\Program Files\LLVM\bin)
+          $llvm = 'C:\Program Files\LLVM\bin'
+          if (Test-Path "$llvm\clang.exe") {
+            "MSVC_CLANG_COMPILER=$llvm\clang.exe"   | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            "MSVC_CLANG_LINKER=$llvm\lld-link.exe"  | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            Write-Host "Standalone LLVM clang at: $llvm\clang.exe"
+            & "$llvm\clang.exe" --version
+          } else {
+            Write-Error "choco install llvm did not produce $llvm\clang.exe"
+            exit 1
+          }
 
       - name: Configure GenieAPIService
         shell: cmd
@@ -568,18 +589,13 @@ jobs:
         # builds add ~30-45 min to wall-clock time (hence the bumped
         # timeout above).
         #
-        # -T "ClangCL,host=x64" pins the toolset to ClangCL on an x64
-        # host. Two reasons:
-        #   1. MNN's ExternalProject_Add explicitly sets CMAKE_C_COMPILER
-        #      to <VS>/Tools/Llvm/<host>/bin/clang.exe — staying on ClangCL
-        #      at the outer build keeps the compiler family consistent
-        #      across all subprojects.
-        #   2. host=x64 selects the x64-hosted compiler binaries (the
-        #      ARM64-hosted Llvm subcomponent isn't always installed on
-        #      VS editions; the x64-hosted variant is universal).
+        # Note: Service's own targets stay on the default MSVC cl.exe
+        # (no -T ClangCL). Only MNN's internal ExternalProject needs
+        # clang, and dependents.cmake reads MSVC_CLANG_COMPILER from
+        # env (set above) to pick the standalone LLVM install.
         run: |
           if not exist build mkdir build
-          cmake -S . -B build -A ARM64 -T "ClangCL,host=x64" -DUSE_MNN=ON -DUSE_GGUF=ON
+          cmake -S . -B build -A ARM64 -DUSE_MNN=ON -DUSE_GGUF=ON
 
       - name: Build GenieAPIService
         shell: cmd
