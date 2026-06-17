@@ -565,13 +565,19 @@ jobs:
           choco install -y llvm  --no-progress
           # Surface where choco put it (default: C:\Program Files\LLVM\bin)
           $llvm = 'C:\Program Files\LLVM\bin'
-          if (Test-Path "$llvm\clang.exe") {
-            "MSVC_CLANG_COMPILER=$llvm\clang.exe"   | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-            "MSVC_CLANG_LINKER=$llvm\lld-link.exe"  | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-            Write-Host "Standalone LLVM clang at: $llvm\clang.exe"
-            & "$llvm\clang.exe" --version
+          # Use clang-cl (MSVC-compatible driver), NOT clang.exe (GNU driver).
+          # Under -A ARM64 the GNU driver pulls host-arch msvcrtd.lib by
+          # default and link fails with "machine type arm64 conflicts with x64".
+          # clang-cl honours the cmake target arch end-to-end.
+          if ((Test-Path "$llvm\clang-cl.exe") -and (Test-Path "$llvm\lld-link.exe")) {
+            "MSVC_CLANG_COMPILER=$llvm\clang-cl.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            "MSVC_CLANG_LINKER=$llvm\lld-link.exe"   | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            "$llvm" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+            Write-Host "Standalone LLVM clang-cl at: $llvm\clang-cl.exe"
+            & "$llvm\clang-cl.exe" --version
+            & "$llvm\lld-link.exe" --version
           } else {
-            Write-Error "choco install llvm did not produce $llvm\clang.exe"
+            Write-Error "choco install llvm did not produce $llvm\clang-cl.exe and/or $llvm\lld-link.exe"
             exit 1
           }
 
