@@ -14,8 +14,13 @@ name: CI
 #   - build samples/genie/c++/Service (GenieAPIService) on windows-2022
 #     cross-compiled to ARM64, per samples/genie/c++/docs/BUILD.md. Pulls
 #     ~11 genie/c++/External/* submodules (llama.cpp, MNN, curl, ...).
-#     Built with USE_MNN=ON + USE_GGUF=ON so the binary supports all
-#     three model backends (BIN/MNN/GGUF).
+#     USE_MNN/USE_GGUF currently OFF on hosted runners — re-enable once
+#     the toolchain story is sorted out (see ci-stage-a history).
+#   - build samples/genie/c++/Service for Linux ARM64 (ubuntu-22.04-arm)
+#     via the project-provided build_linux.sh.
+#   - build samples/genie/c++/Service for Android arm64-v8a (windows-2022
+#     + NDK r26d) via the project-provided build_android.bat. APK signing
+#     step is best-effort (no signing secrets configured).
 #
 # Release: pushing a `v*` tag (e.g. `git tag v2.47.0 && git push --tags`)
 # additionally triggers the `release` job, which gathers every build
@@ -631,6 +636,209 @@ jobs:
   # Skip:    every regular branch push and pull_request — the `if:` below
   #          gates the whole job.
   # -----------------------------------------------------------------
+  # -----------------------------------------------------------------
+  # samples/genie/c++/Service — GenieAPIService Linux ARM64 build via
+  # the project-provided build_linux.sh.
+  #
+  # Runs on ubuntu-22.04-arm (native aarch64). The script does the
+  # configure + build of Service/, also builds libsamplerate from the
+  # bundled External/ submodule, and copies QAIRT runtime libs +
+  # default model config files into Service/GenieService_v<APPVER>_qnn<SDKVER>/.
+  #
+  # Build-only — running GenieAPIService needs an LLM model and an
+  # NPU/HTP backend, which is Stage B real-hardware territory.
+  # -----------------------------------------------------------------
+  build-genie-service-linux-arm64:
+    name: genie c++ Service · linux arm64 · qnn2.47.0.260601
+    runs-on: ubuntu-22.04-arm
+    timeout-minutes: 60
+    steps:
+      - name: Checkout (with genie submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Init genie c++ + pybind11 submodules
+        # The Service build runs ExternalProject for libappbuilder out of
+        # the repo root, which references pybind11. The genie/c++/External
+        # submodules cover libsamplerate, CLI11, json, cpp-httplib, dr_libs,
+        # stb, LibrosaCpp — all required by build_linux.sh's submodule check.
+        run: |
+          git submodule update --init --depth 1 pybind/pybind11
+          git submodule update --init --depth 1 --recursive samples/genie/c++/External
+
+      - name: Install build toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build unzip
+
+      - name: Setup QNN SDK
+        uses: ./.github/actions/setup-qnn-sdk
+        with:
+          version: '2.47.0.260601'
+
+      - name: Append trailing slash to QNN_SDK_ROOT
+        # build_linux.sh's downstream cmake (in dependents.cmake) does
+        # string concat with QNN_SDK_ROOT — same trailing-slash convention
+        # as the Windows Service / Android jobs.
+        run: |
+          root="${QNN_SDK_ROOT%/}/"
+          echo "QNN_SDK_ROOT=$root" >> "$GITHUB_ENV"
+          echo "QNN_SDK_ROOT=$root"
+          test -d "${root}lib/aarch64-oe-linux-gcc11.2" \
+            || { echo "Expected aarch64-oe-linux-gcc11.2 lib dir missing under $root"; ls "${root}lib" || true; exit 1; }
+
+      - name: Build GenieAPIService via build_linux.sh
+        # Run the project-provided helper script verbatim — the same path
+        # local devs follow per BUILD_LINUX.md. USE_MNN/USE_GGUF stay OFF
+        # for the same toolchain reasons we hit on Windows.
+        run: |
+          chmod +x samples/genie/c++/build_linux.sh
+          (cd samples/genie/c++ && ./build_linux.sh)
+
+      - name: Locate output and verify
+        id: locate
+        run: |
+          out_dir=$(find samples/genie/c++/Service -maxdepth 1 -type d -name 'GenieService_v*_qnn*' | head -n1)
+          if [ -z "$out_dir" ]; then
+            echo "Expected GenieService_v*_qnn*/ output directory not found:"
+            ls -la samples/genie/c++/Service/ || true
+            exit 1
+          fi
+          echo "Output dir: $out_dir"
+          ls -lh "$out_dir"
+          echo "out-name=$(basename "$out_dir")" >> "$GITHUB_OUTPUT"
+          echo "out-dir=$out_dir" >> "$GITHUB_OUTPUT"
+
+      - name: Upload GenieService artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.locate.outputs.out-name }}-linux_aarch64
+          path: ${{ steps.locate.outputs.out-dir }}/**
+          if-no-files-found: error
+
+      - name: Upload CMake logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cmake-logs-genie-service-linux-arm64
+          path: |
+            samples/genie/c++/Service/build/**/CMakeFiles/CMakeOutput.log
+            samples/genie/c++/Service/build/**/CMakeFiles/CMakeError.log
+            samples/genie/c++/Service/build/**/CMakeCache.txt
+          if-no-files-found: ignore
+
+  # -----------------------------------------------------------------
+  # samples/genie/c++/Service — Android arm64-v8a build via the
+  # project-provided build_android.bat.
+  #
+  # Runs on windows-2022 (the .bat is Windows-only). The script builds
+  # libappbuilder.so, libGenieAPIService.so, libJNIGenieAPIService.so,
+  # then attempts to assemble a release APK via Gradle. The APK step
+  # requires a release-signing keystore (configured in
+  # Android/app/build.gradle.kts) which doesn't exist on the runner —
+  # the script's :skip_apk fallback gracefully exits with the .so files
+  # already produced. continue-on-error keeps the run "green-with-
+  # unsigned-libs" until proper signing secrets are wired up.
+  # -----------------------------------------------------------------
+  build-android-genie-service:
+    name: genie c++ Service · android arm64-v8a · qnn2.47.0.260601
+    runs-on: windows-2022
+    timeout-minutes: 60
+    # APK-signing step is expected to fail on hosted runners until a
+    # release keystore is wired up via secrets. .so artifacts produced
+    # before that step are still uploaded.
+    continue-on-error: true
+    steps:
+      - name: Checkout (with genie submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Init genie c++ + pybind11 submodules
+        shell: pwsh
+        run: |
+          git submodule update --init --depth 1 pybind/pybind11
+          git submodule update --init --depth 1 --recursive samples/genie/c++/External
+
+      - name: Setup Android NDK r26d
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26d
+          add-to-path: false
+
+      - name: Setup QNN SDK
+        uses: ./.github/actions/setup-qnn-sdk
+        with:
+          version: '2.47.0.260601'
+
+      - name: Install ninja
+        shell: pwsh
+        run: choco install -y ninja --no-progress
+
+      - name: Patch build_android.bat for CI paths
+        shell: pwsh
+        # The script hard-codes:
+        #   set "QNN_SDK_ROOT=C:\Qualcomm\AIStack\QAIRT\2.46.0.260424\"
+        #   set "NDK_ROOT=C:\work\android-ndk-r26d-windows\android-ndk-r26d\"
+        # Rewrite both lines in-place so the script picks up the runner-
+        # provisioned QNN SDK + NDK. Trailing slash kept (the script's
+        # downstream make/cmake assumes it).
+        run: |
+          $bat = 'samples/genie/c++/build_android.bat'
+          $qnn = ($env:QNN_SDK_ROOT.TrimEnd('\','/') + '\').Replace('/', '\')
+          $ndk = ('${{ steps.ndk.outputs.ndk-path }}'.TrimEnd('\','/') + '\').Replace('/', '\')
+          (Get-Content $bat) `
+            -replace 'set "QNN_SDK_ROOT=.*?"', ('set "QNN_SDK_ROOT=' + $qnn + '"') `
+            -replace 'set "NDK_ROOT=.*?"',     ('set "NDK_ROOT='     + $ndk + '"') `
+            | Set-Content $bat
+          Write-Host "Patched paths:"
+          Select-String -Path $bat -Pattern 'set "QNN_SDK_ROOT=|set "NDK_ROOT=' | Select-Object -ExpandProperty Line
+
+      - name: Build via build_android.bat
+        shell: cmd
+        working-directory: samples/genie/c++
+        run: |
+          call build_android.bat
+
+      - name: Verify .so output
+        shell: pwsh
+        # The .so files land here regardless of whether the later APK
+        # signing step succeeds, so verify them independently.
+        run: |
+          $out = 'samples/genie/c++/build_android/output/libs/arm64-v8a'
+          if (-not (Test-Path $out)) {
+            Write-Error "Expected output dir $out not found."
+            Get-ChildItem 'samples/genie/c++/build_android' -Recurse -Depth 3 -ErrorAction SilentlyContinue | Select-Object FullName
+            exit 1
+          }
+          Get-ChildItem $out | Select-Object Name, Length
+          $required = @('libappbuilder.so', 'libGenieAPIService.so')
+          foreach ($f in $required) {
+            if (-not (Test-Path (Join-Path $out $f))) {
+              Write-Error "Required artifact missing: $f"
+              exit 1
+            }
+          }
+
+      - name: Upload Android .so artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: GenieService-android-arm64v8a-libs-qnn2.47.0.260601
+          path: samples/genie/c++/build_android/output/libs/arm64-v8a/*.so
+          if-no-files-found: error
+
+      - name: Upload Android APK if produced
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: GenieService-android-arm64v8a-apk-qnn2.47.0.260601
+          path: samples/genie/c++/build_android/output/apk/*.apk
+          if-no-files-found: ignore
+
   release:
     name: Publish GitHub Release
     # Temporarily disabled — re-enable once all build jobs (especially
