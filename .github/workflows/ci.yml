@@ -506,15 +506,42 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Mirrors the wheel matrices' QNN SDK list. See build-windows-x64
-        # above for the genie-url convention.
+        # Build the Windows GenieAPIService against every Community SDK
+        # release we currently support. All `url` values point at the
+        # apigwx-aws.qualcomm.com mirror — keeping them explicit (instead
+        # of relying on the default softwarecenter URL) makes it trivial
+        # to add / drop versions: one line each.
+        #
+        # `genie-url` is the optional customized-Genie overlay zip
+        # published in qualcomm/qai-appbuilder releases. Today only v2.47
+        # has a published overlay; the other rows ship with the SDK-
+        # bundled (upstream) Genie. Fill in the URL for any row once an
+        # overlay zip is published for that version.
         qnn:
-          - version: '2.47.0.260601'
-            url: ''
-            genie-url: 'https://github.com/qualcomm/qai-appbuilder/releases/download/v2.47.0/QAIRT_v2.47.0.260601.zip'
+          - version: '2.40.1.251119'
+            url: 'https://apigwx-aws.qualcomm.com/qsc/public/v1/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/2.40.1.251119/v2.40.1.251119.zip'
+            genie-url: ''
+          - version: '2.41.0.251128'
+            url: 'https://apigwx-aws.qualcomm.com/qsc/public/v1/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/2.41.0.251128/v2.41.0.251128.zip'
+            genie-url: ''
+          - version: '2.42.0.251225'
+            url: 'https://apigwx-aws.qualcomm.com/qsc/public/v1/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/2.42.0.251225/v2.42.0.251225.zip'
+            genie-url: ''
+          - version: '2.43.0.260128'
+            url: 'https://apigwx-aws.qualcomm.com/qsc/public/v1/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/2.43.0.260128/v2.43.0.260128.zip'
+            genie-url: ''
+          - version: '2.44.0.260225'
+            url: 'https://apigwx-aws.qualcomm.com/qsc/public/v1/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/2.44.0.260225/v2.44.0.260225.zip'
+            genie-url: ''
+          - version: '2.45.0.260326'
+            url: 'https://apigwx-aws.qualcomm.com/qsc/public/v1/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/2.45.0.260326/v2.45.0.260326.zip'
+            genie-url: ''
           - version: '2.46.0.260424'
             url: 'https://apigwx-aws.qualcomm.com/qsc/public/v1/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/2.46.0.260424/v2.46.0.260424.zip'
             genie-url: ''
+          - version: '2.47.0.260601'
+            url: 'https://apigwx-aws.qualcomm.com/qsc/public/v1/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/2.47.0.260601/v2.47.0.260601.zip'
+            genie-url: 'https://github.com/qualcomm/qai-appbuilder/releases/download/v2.47.0/QAIRT_v2.47.0.260601.zip'
     steps:
       - name: Checkout (with genie submodules)
         uses: actions/checkout@v4
