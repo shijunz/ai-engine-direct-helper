@@ -60,6 +60,13 @@ on:
   # samples/python/**, .github/**, setup.py, CMakeLists.txt, ...) triggers a run.
   # workflow_dispatch has no filter: manual runs always execute the full matrix.
   push:
+    # Explicit branches + tags. `branches: ['**']` keeps the prior
+    # "any branch push runs CI" behavior; `tags: ['v*']` makes a v*
+    # tag push run the full matrix and then the release job below.
+    # GitHub does NOT apply paths-ignore to tag pushes, so a v* tag
+    # always runs the whole matrix regardless of what it points at.
+    branches: ['**']
+    tags: ['v*']
     paths-ignore:
       - 'tools/**'
       - 'docs/**'
@@ -823,15 +830,6 @@ jobs:
           if-no-files-found: ignore
 
   # -----------------------------------------------------------------
-  # Release — only runs when a `v*` tag is pushed. Collects every
-  # artifact from the build jobs above and attaches them to a new
-  # GitHub Release at that tag.
-  #
-  # Trigger: push of a tag matching v*  (e.g. `git tag v2.47.0 && git push --tags`)
-  # Skip:    every regular branch push and pull_request — the `if:` below
-  #          gates the whole job.
-  # -----------------------------------------------------------------
-  # -----------------------------------------------------------------
   # samples/genie/c++/Service — GenieAPIService Linux ARM64 build via
   # the project-provided build_linux.sh.
   #
@@ -1079,4 +1077,128 @@ jobs:
           name: GenieService-android-arm64v8a-apk-qnn2.48.40.260702
           path: samples/genie/c++/Service/build-android/output/*.apk
           if-no-files-found: ignore
+
+  # -----------------------------------------------------------------
+  # Release (draft) — only runs when a `v*` tag is pushed. Collects the
+  # core build artifacts from the jobs above (wheels + GenieService
+  # zips), filters them to the QNN version the tag targets, and creates
+  # a DRAFT GitHub Release at that tag. A human reviews the draft, adds
+  # the auxiliary assets that no CI job produces yet (QAIRT overlay,
+  # guard.zip, qaimodelbuilder.zip, C++ Release zip, APK), and clicks
+  # Publish. The job never publishes on its own.
+  #
+  # Trigger: push of a tag matching v*  (e.g. `git tag v2.48.40 && git push --tags`).
+  #          GitHub does not apply paths-ignore to tag refs, so the full
+  #          matrix always builds first; this job runs after it.
+  # Skip:    every regular branch push and pull_request — the `if:` gates it.
+  # -----------------------------------------------------------------
+  release:
+    name: Release (draft) · ${{ github.ref_name }}
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write            # only this job needs write; build jobs stay read-only
+    needs:
+      - build-windows-x64
+      - build-windows-arm64
+      - build-linux-arm64
+      - build-genie-service-windows-arm64
+      - build-genie-service-linux-arm64
+      - build-android-genie-service
+      # build-android-arm64v8a is intentionally omitted: it is `if: false`,
+      # and a skipped job in `needs` would cascade-skip this release job.
+    steps:
+      - name: Checkout (for setup.py version check only)
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Verify tag matches setup.py VERSION
+        # Parse the VERSION string literal — do NOT import setup.py, which
+        # reassigns VERSION from QNN_SDK_ROOT and triggers a real build.
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          TAGVER="${TAG#v}"
+          SETUPVER="$(grep -m1 -oP '^VERSION\s*=\s*"\K[^"]+' setup.py)"
+          if [ "$TAGVER" != "$SETUPVER" ]; then
+            echo "::error::Tag $TAG (version $TAGVER) does not match setup.py VERSION=$SETUPVER"
+            exit 1
+          fi
+          echo "TAGVER=$TAGVER" >> "$GITHUB_ENV"
+          echo "Tag $TAG matches setup.py VERSION $SETUPVER"
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts        # each artifact lands in artifacts/<name>/
+
+      - name: Filter to the tag's QNN version and stage assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p staging
+          # Artifact dir names carry the full 4-part QNN version, e.g.
+          #   qai_appbuilder-2.48.40-cp313-cp313-win_arm64ec-qnn2.48.40.260702
+          #   GenieService-windows-arm64-qnn2.48.40.260702
+          # The tag is 3-part (v2.48.40). Recover the full version from the
+          # first artifact dir whose name matches qnn<TAGVER>.*
+          MATCH_DIR="$(ls -d artifacts/*qnn${TAGVER}.* 2>/dev/null | head -n1 || true)"
+          if [ -z "$MATCH_DIR" ]; then
+            echo "::error::No artifacts matching qnn${TAGVER}.* — nothing to release."
+            ls -1 artifacts || true
+            exit 1
+          fi
+          FULLVER="$(basename "$MATCH_DIR" | grep -oP 'qnn\K[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')"
+          echo "FULLVER=$FULLVER" >> "$GITHUB_ENV"
+          echo "Releasing QNN version $FULLVER (tag ${GITHUB_REF_NAME})"
+          shopt -s nullglob
+          # (1) Wheels — take the dist/*.whl from each wheel artifact whose
+          #     name ends in -qnn<FULLVER>; skip cmake-logs and GenieService.
+          for d in artifacts/*-qnn${FULLVER}; do
+            base="$(basename "$d")"
+            case "$base" in
+              cmake-logs-*|GenieService-*) continue;;
+            esac
+            for w in "$d"/dist/*.whl; do
+              cp -v "$w" staging/
+            done
+          done
+          # (2) GenieService win/linux — CI uploads a directory tree; repackage
+          #     each into a clean-rooted zip named GenieService-<os>-arm64.zip.
+          for os in windows linux; do
+            src="artifacts/GenieService-${os}-arm64-qnn${FULLVER}"
+            if [ -d "$src" ]; then
+              out="GenieService-${os/windows/win}-arm64.zip"
+              ( cd "$src" && zip -r -q "$GITHUB_WORKSPACE/staging/$out" . )
+              echo "Packaged $out"
+            fi
+          done
+          echo "Staged assets:"
+          ls -lh staging/
+          test -n "$(ls -A staging/)" || { echo "::error::staging/ is empty"; exit 1; }
+
+      - name: Create draft GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "QAI AppBuilder for QAIRT SDK ${FULLVER}" \
+            --draft \
+            --verify-tag \
+            --notes "Automated draft for ${GITHUB_REF_NAME} (QAIRT SDK ${FULLVER}).
+
+          Auto-attached by CI: Python wheels + GenieService win/linux zips.
+
+          ADD MANUALLY before publishing (no CI job produces these yet):
+          - QAIRT_v${FULLVER}.zip (Genie overlay)
+          - guard.zip
+          - qaimodelbuilder.zip
+          - QAI_AppBuilder-*-Release.zip (C++ libs)
+          - Android APK" \
+            staging/*
 
