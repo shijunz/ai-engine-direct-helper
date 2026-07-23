@@ -1155,16 +1155,18 @@ jobs:
           echo "FULLVER=$FULLVER" >> "$GITHUB_ENV"
           echo "Releasing QNN version $FULLVER (tag ${GITHUB_REF_NAME})"
           shopt -s nullglob
-          # (1) Wheels — take the dist/*.whl from each wheel artifact whose
+          # (1) Wheels — take every .whl from each wheel artifact whose
           #     name ends in -qnn<FULLVER>; skip cmake-logs and GenieService.
+          #     upload-artifact@v4 collapses `dist/*.whl` to the artifact
+          #     root (dist/ is the common ancestor of the upload paths), so
+          #     the wheel may sit at the artifact root OR under dist/ —
+          #     recurse to catch both layouts instead of assuming dist/.
           for d in artifacts/*-qnn${FULLVER}; do
             base="$(basename "$d")"
             case "$base" in
               cmake-logs-*|GenieService-*) continue;;
             esac
-            for w in "$d"/dist/*.whl; do
-              cp -v "$w" staging/
-            done
+            find "$d" -type f -name '*.whl' -exec cp -v {} staging/ \;
           done
           # (2) GenieService win/linux — CI uploads a directory tree; repackage
           #     each into a clean-rooted zip named GenieService-<os>-arm64.zip.
